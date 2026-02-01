@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Background circle -->
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0"/>
+
+    <!-- Q letter for Quick Odds -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30c-13.25,0 -24,10.75 -24,24s10.75,24 24,24c5.5,0 10.57,-1.86 14.63,-4.97l6.37,6.37l5.66,-5.66l-6.37,-6.37c3.11,-4.06 4.97,-9.13 4.97,-14.63c0,-13.25 -10.75,-24 -24,-24zM54,38c8.84,0 16,7.16 16,16s-7.16,16 -16,16s-16,-7.16 -16,-16s7.16,-16 16,-16z"/>
+</vector>
