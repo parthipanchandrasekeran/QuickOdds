@@ -9,15 +9,17 @@ import com.quickodds.app.data.local.dao.CachedAnalysisDao
 import com.quickodds.app.data.local.dao.CachedOddsEventDao
 import com.quickodds.app.data.local.dao.UserWalletDao
 import com.quickodds.app.data.local.entity.CachedAnalysisEntity
-import com.quickodds.app.data.local.entity.CachedOddsEventEntity
 import com.quickodds.app.data.local.entity.UserWallet
+import com.quickodds.app.data.local.entity.CachedOddsEventEntity
 import com.quickodds.app.data.remote.api.OddsCloudFunctionService
 import com.quickodds.app.data.remote.dto.OddsEvent
 import com.quickodds.app.data.remote.MockOddsDataSource
 import com.quickodds.app.ui.components.MatchCardState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -31,7 +33,8 @@ data class MarketUiState(
     val selectedSport: String = "soccer_epl",
     val availableSports: List<SportOption> = defaultSports,
     val error: String? = null,
-    val isUsingLiveData: Boolean = false
+    val isUsingLiveData: Boolean = false,
+    val isAnalyzingAll: Boolean = false
 ) {
     companion object {
         val defaultSports = listOf(
@@ -85,19 +88,7 @@ class MarketViewModel @Inject constructor(
 
     private fun initializeAndObserveWallet() {
         viewModelScope.launch {
-            // Ensure wallet exists before observing
-            val existingWallet = walletDao.getWallet()
-            if (existingWallet == null) {
-                Log.d(TAG, "Wallet not found, creating default wallet")
-                walletDao.insertWallet(
-                    UserWallet(
-                        balance = 10000.0,
-                        currency = "USD"
-                    )
-                )
-            }
-
-            // Now observe the wallet
+            // Wallet is initialized in QuickOddsApp - just observe it
             walletDao.observeWallet().collect { wallet ->
                 _uiState.update { it.copy(wallet = wallet) }
             }
@@ -122,61 +113,67 @@ class MarketViewModel @Inject constructor(
                 var isLiveData = false
                 var fromCache = false
 
-                // Step 1: Check if cache is fresh (15-minute stale time)
-                val shouldFetch = cachedOddsEventDao.shouldFetchFromApi(sportKey)
-                Log.d(TAG, "Sport: $sportKey, shouldFetchFromApi: $shouldFetch")
+                // Run all I/O work off main thread
+                withContext(Dispatchers.IO) {
+                    // Step 1: Check if cache is fresh (15-minute stale time)
+                    val shouldFetch = cachedOddsEventDao.shouldFetchFromApi(sportKey)
+                    Log.d(TAG, "Sport: $sportKey, shouldFetchFromApi: $shouldFetch")
 
-                if (!shouldFetch) {
-                    // Cache is fresh - return cached data
-                    val cachedEvents = cachedOddsEventDao.getEventsBySport(sportKey)
-                    matches = cachedEvents.mapNotNull { it.toOddsEvent() }
-
-                    if (matches.isNotEmpty()) {
-                        Log.d(TAG, "Returning ${matches.size} cached events for $sportKey (saving API credits)")
-                        isLiveData = true  // Cached live data is still live data
-                        fromCache = true
-                    }
-                }
-
-                // Step 2: If cache is stale or empty, fetch from API
-                if (matches.isEmpty()) {
-                    Log.d(TAG, "Cache empty or stale, fetching from API for $sportKey")
-                    try {
-                        val response = cloudFunctionService.getUpcomingOdds(
-                            sportKey = sportKey,
-                            regions = "us,uk,eu",
-                            markets = "h2h",  // Only request h2h market to save credits
-                            oddsFormat = "decimal"
-                        )
-
-                        if (response.isSuccessful && !response.body().isNullOrEmpty()) {
-                            matches = response.body()!!
-                            isLiveData = true
-
-                            // Cache the fresh data
-                            val cachedEntities = matches.map { CachedOddsEventEntity.fromOddsEvent(it) }
-                            cachedOddsEventDao.refreshEvents(sportKey, cachedEntities)
-                            Log.d(TAG, "Fetched and cached ${matches.size} events from API for $sportKey")
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "API call failed: ${e.message}")
-
-                        // Try to serve stale cache if available
+                    if (!shouldFetch) {
+                        // Cache is fresh - return cached data
                         val cachedEvents = cachedOddsEventDao.getEventsBySport(sportKey)
-                        if (cachedEvents.isNotEmpty()) {
-                            matches = cachedEvents.mapNotNull { it.toOddsEvent() }
-                            isLiveData = true
+                        matches = cachedEvents.mapNotNull { it.toOddsEvent() }
+
+                        if (matches.isNotEmpty()) {
+                            Log.d(TAG, "Returning ${matches.size} cached events for $sportKey (saving API credits)")
+                            isLiveData = true  // Cached live data is still live data
                             fromCache = true
-                            Log.d(TAG, "Serving stale cache (${matches.size} events) due to API error")
                         }
                     }
-                }
 
-                // Step 3: Fall back to mock data if no live data available
-                if (matches.isEmpty()) {
-                    matches = MockOddsDataSource.getMatches(sportKey)
-                    isLiveData = false
-                    Log.d(TAG, "Using mock data for $sportKey")
+                    // Step 2: If cache is stale or empty, fetch from API
+                    if (matches.isEmpty()) {
+                        Log.d(TAG, "Cache empty or stale, fetching from API for $sportKey")
+                        try {
+                            val response = cloudFunctionService.getUpcomingOdds(
+                                sportKey = sportKey,
+                                regions = "us,uk,eu",
+                                markets = "h2h",  // Only request h2h market to save credits
+                                oddsFormat = "decimal"
+                            )
+
+                            if (response.isSuccessful && !response.body().isNullOrEmpty()) {
+                                matches = response.body()!!
+                                isLiveData = true
+
+                                // Cache the fresh data
+                                val cachedEntities = matches.map { CachedOddsEventEntity.fromOddsEvent(it) }
+                                cachedOddsEventDao.refreshEvents(sportKey, cachedEntities)
+                                Log.d(TAG, "Fetched and cached ${matches.size} events from API for $sportKey")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "API call failed: ${e.message}")
+
+                            // Try to serve stale cache if available
+                            val cachedEvents = cachedOddsEventDao.getEventsBySport(sportKey)
+                            if (cachedEvents.isNotEmpty()) {
+                                matches = cachedEvents.mapNotNull { it.toOddsEvent() }
+                                isLiveData = true
+                                fromCache = true
+                                Log.d(TAG, "Serving stale cache (${matches.size} events) due to API error")
+                            }
+                        }
+                    }
+
+                    // Step 3: Fall back to mock data if no live data available
+                    if (matches.isEmpty()) {
+                        matches = MockOddsDataSource.getMatches(sportKey)
+                        isLiveData = false
+                        Log.d(TAG, "Using mock data for $sportKey")
+                    }
+
+                    // Sort by commenceTime so nearest matches appear first
+                    matches = matches.sortedBy { it.commenceTime }
                 }
 
                 // Initialize match states
@@ -216,77 +213,84 @@ class MarketViewModel @Inject constructor(
     }
 
     /**
-     * Trigger AI analysis for a specific match.
-     * Uses cache-first strategy to avoid duplicate API calls.
+     * Trigger AI analysis for a specific match (fire-and-forget from UI).
      */
     fun analyzeMatch(matchId: String) {
+        viewModelScope.launch {
+            performAnalysis(matchId)
+        }
+    }
+
+    /**
+     * Core analysis logic as a suspend function.
+     * Uses cache-first strategy to avoid duplicate API calls.
+     */
+    private suspend fun performAnalysis(matchId: String) {
         val match = _uiState.value.matches.find { it.id == matchId } ?: return
 
         // Update state to show loading
         updateMatchState(matchId) { it.copy(isAnalyzing = true, error = null) }
 
-        viewModelScope.launch {
-            try {
-                // Step 1: Check cache first
-                val cachedAnalysis = cachedAnalysisDao.getAnalysis(matchId)
-                if (cachedAnalysis != null && !cachedAnalysis.isStale()) {
-                    val analysis = cachedAnalysis.toAnalysis()
-                    if (analysis != null) {
-                        Log.d(TAG, "Using cached analysis for $matchId (saving API credits)")
-                        updateMatchState(matchId) {
-                            it.copy(
-                                isAnalyzing = false,
-                                isAnalyzed = true,
-                                analysisResult = analysis
-                            )
-                        }
-                        return@launch
-                    }
-                }
-
-                // Step 2: No valid cache, call API
-                Log.d(TAG, "No cached analysis for $matchId, calling API")
-                val matchData = createMatchData(match)
-                val stats = RecentStats(
-                    homeTeamForm = "WWLDW",  // Would come from actual stats API
-                    awayTeamForm = "LWWDL"
-                )
-
-                when (val result = analysisService.analyzeMatch(matchData, stats)) {
-                    is AnalysisResult.Success -> {
-                        val analysis = result.result.aiAnalysis
-
-                        // Save to cache
-                        cachedAnalysisDao.insertAnalysis(
-                            CachedAnalysisEntity.fromAnalysis(matchId, analysis)
+        try {
+            // Step 1: Check cache first
+            val cachedAnalysis = cachedAnalysisDao.getAnalysis(matchId)
+            if (cachedAnalysis != null && !cachedAnalysis.isStale()) {
+                val analysis = cachedAnalysis.toAnalysis()
+                if (analysis != null) {
+                    Log.d(TAG, "Using cached analysis for $matchId (saving API credits)")
+                    updateMatchState(matchId) {
+                        it.copy(
+                            isAnalyzing = false,
+                            isAnalyzed = true,
+                            analysisResult = analysis
                         )
-                        Log.d(TAG, "Cached analysis for $matchId")
+                    }
+                    return
+                }
+            }
 
-                        updateMatchState(matchId) {
-                            it.copy(
-                                isAnalyzing = false,
-                                isAnalyzed = true,
-                                analysisResult = analysis
-                            )
-                        }
-                    }
-                    is AnalysisResult.Error -> {
-                        updateMatchState(matchId) {
-                            it.copy(
-                                isAnalyzing = false,
-                                error = result.message
-                            )
-                        }
-                    }
-                    else -> {}
-                }
-            } catch (e: Exception) {
-                updateMatchState(matchId) {
-                    it.copy(
-                        isAnalyzing = false,
-                        error = e.message ?: "Analysis failed"
+            // Step 2: No valid cache, call API
+            Log.d(TAG, "No cached analysis for $matchId, calling API")
+            val matchData = createMatchData(match)
+            val stats = RecentStats(
+                homeTeamForm = "WWLDW",  // Would come from actual stats API
+                awayTeamForm = "LWWDL"
+            )
+
+            when (val result = analysisService.analyzeMatch(matchData, stats)) {
+                is AnalysisResult.Success -> {
+                    val analysis = result.result.aiAnalysis
+
+                    // Save to cache
+                    cachedAnalysisDao.insertAnalysis(
+                        CachedAnalysisEntity.fromAnalysis(matchId, analysis)
                     )
+                    Log.d(TAG, "Cached analysis for $matchId")
+
+                    updateMatchState(matchId) {
+                        it.copy(
+                            isAnalyzing = false,
+                            isAnalyzed = true,
+                            analysisResult = analysis
+                        )
+                    }
                 }
+                is AnalysisResult.Error -> {
+                    updateMatchState(matchId) {
+                        it.copy(
+                            isAnalyzing = false,
+                            error = result.message
+                        )
+                    }
+                }
+                else -> {}
+            }
+        } catch (e: Exception) {
+            updateMatchState(matchId) {
+                it.copy(
+                    isAnalyzing = false,
+                    error = e.message ?: "Analysis failed"
+                )
             }
         }
     }
@@ -318,25 +322,39 @@ class MarketViewModel @Inject constructor(
     }
 
     /**
-     * Generate demo analysis result for testing without API.
+     * Analyze all matches that are scheduled for today.
+     * Skips matches that are already analyzed or currently being analyzed.
      */
-    private fun generateDemoAnalysis(match: OddsEvent): AIAnalysisResponse {
-        val isValue = kotlin.random.Random.nextFloat() > 0.5
-        val recommendation = listOf("HOME", "AWAY", "DRAW").random()
+    fun analyzeAllToday() {
+        val state = _uiState.value
+        val todayMatches = state.matches.filter { match ->
+            isTodayMatch(match.commenceTime) &&
+                state.matchStates[match.id]?.isAnalyzed != true &&
+                state.matchStates[match.id]?.isAnalyzing != true
+        }
 
-        return AIAnalysisResponse(
-            recommendation = if (isValue) recommendation else "NO_BET",
-            confidenceScore = if (isValue) 0.6 + kotlin.random.Random.nextFloat() * 0.3 else 0.4,
-            isValueBet = isValue,
-            rationale = if (isValue) {
-                "Statistical analysis indicates ${if (recommendation == "HOME") match.homeTeam else match.awayTeam} has a ${(5 + kotlin.random.Random.nextInt(10))}% edge"
-            } else {
-                "No significant edge found - odds are fairly priced"
-            },
-            projectedProbability = 0.45 + kotlin.random.Random.nextFloat() * 0.2,
-            edgePercentage = if (isValue) 5.0 + kotlin.random.Random.nextDouble() * 10 else -2.0,
-            suggestedStake = if (isValue) kotlin.random.Random.nextInt(1, 4) else 0
-        )
+        if (todayMatches.isEmpty()) return
+
+        _uiState.update { it.copy(isAnalyzingAll = true) }
+
+        viewModelScope.launch {
+            // Analyze sequentially to avoid API rate limits
+            for (match in todayMatches) {
+                performAnalysis(match.id)
+            }
+            _uiState.update { it.copy(isAnalyzingAll = false) }
+        }
+    }
+
+    private fun isTodayMatch(commenceTime: String): Boolean {
+        return try {
+            val matchInstant = java.time.Instant.parse(commenceTime)
+            val matchDate = matchInstant.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            val today = java.time.LocalDate.now()
+            matchDate == today
+        } catch (e: Exception) {
+            false
+        }
     }
 
     fun clearError() {

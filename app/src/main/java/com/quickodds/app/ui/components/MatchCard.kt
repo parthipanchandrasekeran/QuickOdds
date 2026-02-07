@@ -18,13 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import com.quickodds.app.ai.model.AIAnalysisResponse
 import com.quickodds.app.data.remote.dto.OddsEvent
+import com.quickodds.app.ui.theme.GreenValue
 
 /**
  * State for a match card with analysis.
@@ -184,7 +185,7 @@ private fun AIBrainButton(
             .clip(CircleShape)
             .background(
                 when {
-                    state.analysisResult?.isValueBet == true -> Color(0xFF4CAF50)
+                    state.analysisResult?.isValueBet == true -> GreenValue
                     state.isAnalyzed -> MaterialTheme.colorScheme.primaryContainer
                     else -> MaterialTheme.colorScheme.surfaceVariant
                 }
@@ -243,12 +244,12 @@ private fun OddsChip(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
         color = if (isHighlighted) {
-            Color(0xFF4CAF50).copy(alpha = 0.15f)
+            GreenValue.copy(alpha = 0.15f)
         } else {
             MaterialTheme.colorScheme.surfaceVariant
         },
         border = if (isHighlighted) {
-            androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF4CAF50))
+            androidx.compose.foundation.BorderStroke(2.dp, GreenValue)
         } else null
     ) {
         Column(
@@ -264,7 +265,7 @@ private fun OddsChip(
                 text = String.format("%.2f", odds),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (isHighlighted) Color(0xFF4CAF50)
+                color = if (isHighlighted) GreenValue
                        else MaterialTheme.colorScheme.onSurface
             )
         }
@@ -281,7 +282,7 @@ private fun ValueBetBanner(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF4CAF50).copy(alpha = 0.1f)
+        color = GreenValue.copy(alpha = 0.1f)
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -289,7 +290,7 @@ private fun ValueBetBanner(
         ) {
             // Star badge
             Surface(
-                color = Color(0xFF4CAF50),
+                color = GreenValue,
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Row(

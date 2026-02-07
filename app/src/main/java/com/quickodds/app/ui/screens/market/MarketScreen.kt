@@ -8,16 +8,18 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.quickodds.app.ui.components.*
+import com.quickodds.app.ui.theme.GreenValue
+import com.quickodds.app.ui.theme.OrangeWarning
 
 /**
  * Main Market Screen displaying live matches and AI analysis.
@@ -57,7 +59,7 @@ fun MarketScreen(
                                 imageVector = Icons.Default.Circle,
                                 contentDescription = null,
                                 modifier = Modifier.size(8.dp),
-                                tint = if (uiState.isUsingLiveData) Color(0xFF4CAF50) else Color(0xFFFF9800)
+                                tint = if (uiState.isUsingLiveData) GreenValue else OrangeWarning
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
@@ -76,6 +78,24 @@ fun MarketScreen(
                             currency = wallet.currency,
                             modifier = Modifier.padding(end = 8.dp)
                         )
+                    }
+
+                    // Analyze All Today button
+                    IconButton(
+                        onClick = { viewModel.analyzeAllToday() },
+                        enabled = !uiState.isAnalyzingAll && !uiState.isLoading
+                    ) {
+                        if (uiState.isAnalyzingAll) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Psychology,
+                                contentDescription = "Analyze all today's matches"
+                            )
+                        }
                     }
 
                     IconButton(onClick = { viewModel.loadMatches() }) {
@@ -211,7 +231,7 @@ private fun MatchesList(
                 Row(
                     modifier = Modifier
                         .background(
-                            color = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                            color = GreenValue.copy(alpha = 0.1f),
                             shape = RoundedCornerShape(8.dp)
                         )
                         .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -221,13 +241,13 @@ private fun MatchesList(
                         imageVector = Icons.Default.Circle,
                         contentDescription = null,
                         modifier = Modifier.size(10.dp),
-                        tint = Color(0xFF4CAF50)
+                        tint = GreenValue
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Live odds from The-Odds-API",
                         style = MaterialTheme.typography.labelMedium,
-                        color = Color(0xFF4CAF50)
+                        color = GreenValue
                     )
                 }
             }
@@ -244,7 +264,7 @@ private fun MatchesList(
                     text = "Value Bets Found",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF4CAF50),
+                    color = GreenValue,
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
             }

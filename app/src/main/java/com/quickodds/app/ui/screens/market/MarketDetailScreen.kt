@@ -24,6 +24,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.quickodds.app.ai.model.AIAnalysisResponse
+import com.quickodds.app.ui.theme.GreenValue
 import com.quickodds.app.ai.model.BetAnalysisResult
 import com.quickodds.app.ai.model.MatchData
 import com.quickodds.app.ai.model.ImpliedProbabilities
@@ -478,7 +479,7 @@ private fun AIAnalysisSection(
 
                         if (analysisResult.isValueBet) {
                             Surface(
-                                color = Color(0xFF4CAF50),
+                                color = GreenValue,
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Row(
@@ -600,7 +601,7 @@ private fun AnalysisResultContent(
                     text = recommendationText,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = if (result.isValueBet) Color(0xFF4CAF50)
+                    color = if (result.isValueBet) GreenValue
                            else MaterialTheme.colorScheme.onSurface
                 )
             }
@@ -704,7 +705,7 @@ private fun OutcomeCard(
 ) {
     val borderColor = when {
         isSelected -> MaterialTheme.colorScheme.primary
-        isRecommended -> Color(0xFF4CAF50)
+        isRecommended -> GreenValue
         else -> Color.Transparent
     }
 
@@ -734,7 +735,7 @@ private fun OutcomeCard(
                 Icon(
                     imageVector = Icons.Filled.Star,
                     contentDescription = "Recommended",
-                    tint = Color(0xFF4CAF50),
+                    tint = GreenValue,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.height(4.dp))
@@ -873,7 +874,7 @@ private fun BetSummaryCard(
                     "$${String.format("%.2f", potentialWin)}",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF4CAF50)
+                    color = GreenValue
                 )
             }
         }
@@ -1022,7 +1023,7 @@ private fun BetConfirmationBottomSheet(
                     text = "$${String.format("%.2f", data.potentialReturn)}",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF4CAF50)
+                    color = GreenValue
                 )
             }
 
@@ -1035,7 +1036,7 @@ private fun BetConfirmationBottomSheet(
                 Text(
                     text = "(Profit: +$${String.format("%.2f", profit)})",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF4CAF50)
+                    color = GreenValue
                 )
             }
 
@@ -1059,7 +1060,7 @@ private fun BetConfirmationBottomSheet(
                     modifier = Modifier.weight(1f),
                     enabled = !isLoading,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF4CAF50)
+                        containerColor = GreenValue
                     )
                 ) {
                     if (isLoading) {

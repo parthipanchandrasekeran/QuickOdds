@@ -13,9 +13,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
+import com.quickodds.app.ui.theme.GreenValue
+import com.quickodds.app.ui.theme.OrangeWarning
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.quickodds.app.domain.model.Market
 import com.quickodds.app.domain.model.Sport
@@ -252,7 +254,7 @@ private fun ScanAllHeader(
 
                         if (valueBetsFound > 0) {
                             Surface(
-                                color = Color(0xFF4CAF50),
+                                color = GreenValue,
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Row(
@@ -418,7 +420,7 @@ private fun SharpAlertChip(
     sharpSide: String?
 ) {
     Surface(
-        color = Color(0xFFFF9800),  // Orange for sharp alerts
+        color = OrangeWarning,  // Orange for sharp alerts
         shape = RoundedCornerShape(4.dp)
     ) {
         Row(
@@ -458,8 +460,8 @@ private fun AnalysisBadge(
     // Use different colors based on value bet and sharp alert status
     val backgroundColor = when {
         isValueBet && hasSharpAlert -> Color(0xFF2E7D32)  // Dark green for value + sharp
-        isValueBet -> Color(0xFF4CAF50)                   // Green for value bet
-        hasSharpAlert -> Color(0xFFFF9800)                // Orange for sharp alert only
+        isValueBet -> GreenValue                   // Green for value bet
+        hasSharpAlert -> OrangeWarning                // Orange for sharp alert only
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val textColor = if (isValueBet || hasSharpAlert) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
@@ -533,7 +535,7 @@ private fun OddsChip(
                         imageVector = Icons.Default.TrendingUp,
                         contentDescription = "Sharp Money",
                         modifier = Modifier.size(10.dp),
-                        tint = Color(0xFFFF9800)
+                        tint = OrangeWarning
                     )
                 }
             }
@@ -550,7 +552,7 @@ private fun OddsChip(
                         imageVector = Icons.Default.Star,
                         contentDescription = "Recommended",
                         modifier = Modifier.size(12.dp),
-                        tint = Color(0xFF4CAF50)
+                        tint = GreenValue
                     )
                 }
                 isSharpSide -> {
@@ -558,7 +560,7 @@ private fun OddsChip(
                         text = "Sharp",
                         style = MaterialTheme.typography.labelSmall,
                         fontSize = MaterialTheme.typography.labelSmall.fontSize * 0.8,
-                        color = Color(0xFFFF9800),
+                        color = OrangeWarning,
                         fontWeight = FontWeight.SemiBold
                     )
                 }

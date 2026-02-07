@@ -10,7 +10,7 @@ import kotlinx.coroutines.delay
 object MockOddsDataSource {
 
     suspend fun getMatches(sportKey: String): List<OddsEvent> {
-        delay(800) // Simulate network delay
+        delay(200) // Simulate network delay
 
         return when (sportKey) {
             "soccer_usa_mls" -> mlsMatches
@@ -117,7 +117,7 @@ object MockOddsDataSource {
             homeOdds = 2.45,
             drawOdds = 3.40,
             awayOdds = 2.90,
-            hoursFromNow = 24
+            hoursFromNow = 3
         ),
         createMatch(
             id = "epl_002",
@@ -128,7 +128,7 @@ object MockOddsDataSource {
             homeOdds = 1.95,
             drawOdds = 3.60,
             awayOdds = 3.80,
-            hoursFromNow = 48
+            hoursFromNow = 6
         ),
         createMatch(
             id = "epl_003",
@@ -139,7 +139,7 @@ object MockOddsDataSource {
             homeOdds = 1.35,
             drawOdds = 5.00,
             awayOdds = 8.50,
-            hoursFromNow = 72
+            hoursFromNow = 28
         )
     )
 

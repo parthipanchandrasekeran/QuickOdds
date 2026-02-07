@@ -52,5 +52,6 @@ data class VirtualBet(
 enum class BetStatus {
     PENDING,    // Bet is active, awaiting result
     WON,        // Bet was successful
-    LOST        // Bet was unsuccessful
+    LOST,       // Bet was unsuccessful
+    VOID        // Bet cancelled/voided (stake refunded)
 }

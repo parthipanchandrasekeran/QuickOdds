@@ -3,7 +3,8 @@ package com.quickodds.app.ui.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.*
+import androidx.room.withTransaction
+import com.quickodds.app.data.local.AppDatabase
 import com.quickodds.app.data.local.dao.UserWalletDao
 import com.quickodds.app.data.local.dao.VirtualBetDao
 import com.quickodds.app.data.local.entity.BetStatus
@@ -14,7 +15,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 /**
@@ -60,6 +60,7 @@ data class BetUiState(
 @HiltViewModel
 class BetViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val database: AppDatabase,
     private val walletDao: UserWalletDao,
     private val betDao: VirtualBetDao
 ) : ViewModel() {
@@ -206,14 +207,16 @@ class BetViewModel @Inject constructor(
                     timestamp = System.currentTimeMillis()
                 )
 
-                // Insert bet into database
-                val betId = betDao.insertBet(bet)
-
-                // Subtract stake from wallet
-                walletDao.subtractFunds(amount)
+                // ATOMIC: Insert bet and subtract stake in a single transaction
+                val betId = database.withTransaction {
+                    val id = betDao.insertBet(bet)
+                    walletDao.subtractFunds(amount)
+                    id
+                }
 
                 // Schedule settlement worker
-                scheduleSettlementWorker(
+                SmartSettlementWorker.scheduleSettlement(
+                    context = context,
                     betId = betId,
                     eventId = eventId,
                     sportKey = sportKey,
@@ -238,63 +241,6 @@ class BetViewModel @Inject constructor(
                 }
             }
         }
-    }
-
-    /**
-     * Schedule the SmartSettlementWorker to check match results and settle the bet.
-     *
-     * The worker is scheduled to run 4 hours after the match commence time,
-     * allowing enough time for the match to complete and scores to be available.
-     *
-     * @param betId The ID of the bet to settle
-     * @param eventId The Odds API event ID
-     * @param sportKey Sport key for API queries
-     * @param commenceTime Match start time in epoch milliseconds
-     */
-    private fun scheduleSettlementWorker(
-        betId: Long,
-        eventId: String,
-        sportKey: String,
-        commenceTime: Long
-    ) {
-        // Calculate delay: (matchCommenceTime + 4 hours) - currentTime
-        val currentTime = System.currentTimeMillis()
-        val fourHoursInMs = TimeUnit.HOURS.toMillis(4)
-        val settlementTime = commenceTime + fourHoursInMs
-        val delay = maxOf(0L, settlementTime - currentTime)
-
-        // Create input data for the worker
-        val inputData = Data.Builder()
-            .putLong(SmartSettlementWorker.KEY_BET_ID, betId)
-            .putString(SmartSettlementWorker.KEY_EVENT_ID, eventId)
-            .putString(SmartSettlementWorker.KEY_SPORT_KEY, sportKey)
-            .build()
-
-        // Create network constraint - only run when internet is available
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        // Build the work request with delay and constraints
-        val workRequest = OneTimeWorkRequestBuilder<SmartSettlementWorker>()
-            .setInputData(inputData)
-            .setInitialDelay(delay, TimeUnit.MILLISECONDS)
-            .setConstraints(constraints)
-            .addTag("settlement_$betId")
-            .build()
-
-        // Enqueue with unique work to prevent duplicates
-        WorkManager.getInstance(context)
-            .enqueueUniqueWork(
-                "settlement_$betId",
-                ExistingWorkPolicy.REPLACE,
-                workRequest
-            )
-
-        android.util.Log.d(
-            "BetViewModel",
-            "Scheduled settlement for bet $betId in ${delay / 1000 / 60} minutes"
-        )
     }
 
     /**

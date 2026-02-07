@@ -6,6 +6,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickodds.app.ai.AIAnalysisService
 import com.quickodds.app.ai.model.*
+import androidx.room.withTransaction
+import com.quickodds.app.data.local.AppDatabase
 import com.quickodds.app.data.local.dao.CachedAnalysisDao
 import com.quickodds.app.data.local.dao.CachedOddsEventDao
 import com.quickodds.app.data.local.dao.UserWalletDao
@@ -74,6 +76,7 @@ data class MarketDetailUiState(
 @HiltViewModel
 class MarketDetailViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val database: AppDatabase,
     private val walletDao: UserWalletDao,
     private val betDao: VirtualBetDao,
     private val cloudFunctionService: OddsCloudFunctionService,
@@ -89,34 +92,14 @@ class MarketDetailViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(MarketDetailUiState())
     val uiState: StateFlow<MarketDetailUiState> = _uiState.asStateFlow()
 
-    // Separate state for bet confirmation - using compose state for immediate UI updates
-    private val _showConfirmation = MutableStateFlow(false)
-    val showConfirmation: StateFlow<Boolean> = _showConfirmation.asStateFlow()
-
-    private val _confirmationData = MutableStateFlow<BetConfirmationData?>(null)
-    val confirmationData: StateFlow<BetConfirmationData?> = _confirmationData.asStateFlow()
-
     init {
         initializeAndObserveWallet()
     }
 
     private fun initializeAndObserveWallet() {
         viewModelScope.launch {
-            // Ensure wallet exists before observing
-            val existingWallet = walletDao.getWallet()
-            if (existingWallet == null) {
-                Log.d(TAG, "Wallet not found, creating default wallet")
-                walletDao.insertWallet(
-                    UserWallet(
-                        balance = 10000.0,
-                        currency = "USD"
-                    )
-                )
-            }
-
-            // Now observe the wallet
+            // Wallet is initialized in QuickOddsApp - just observe it
             walletDao.observeWallet().collect { wallet ->
-                Log.d(TAG, "Wallet updated: balance=${wallet?.balance}")
                 _uiState.update { it.copy(wallet = wallet) }
             }
         }
@@ -144,15 +127,16 @@ class MarketDetailViewModel @Inject constructor(
                     }
                 }
 
+                val sportsToSearch = listOf(
+                    "soccer_epl",
+                    "soccer_usa_mls",
+                    "americanfootball_nfl",
+                    "basketball_nba"
+                )
+
                 // Step 2: If not in cache or stale, try API
                 if (match == null) {
                     Log.d(TAG, "Match $matchId not in cache, checking API")
-                    val sportsToSearch = listOf(
-                        "soccer_epl",
-                        "soccer_usa_mls",
-                        "americanfootball_nfl",
-                        "basketball_nba"
-                    )
 
                     for (sport in sportsToSearch) {
                         if (match != null) break
@@ -196,13 +180,6 @@ class MarketDetailViewModel @Inject constructor(
 
                 // Step 3: Fall back to mock data if not found
                 if (match == null) {
-                    val sportsToSearch = listOf(
-                        "soccer_epl",
-                        "soccer_usa_mls",
-                        "americanfootball_nfl",
-                        "basketball_nba"
-                    )
-                    // Collect mock matches from all sports
                     val allMockMatches = mutableListOf<OddsEvent>()
                     for (sport in sportsToSearch) {
                         allMockMatches.addAll(MockOddsDataSource.getMatches(sport))
@@ -384,8 +361,6 @@ class MarketDetailViewModel @Inject constructor(
             System.currentTimeMillis()
         }
 
-        Log.d(TAG, "Setting showBetConfirmation=true with stake=$stake, odds=$odds, return=$potentialReturn")
-
         val data = BetConfirmationData(
             eventId = match.id,
             sportKey = match.sportKey,
@@ -400,26 +375,18 @@ class MarketDetailViewModel @Inject constructor(
             recommendedStake = recommendedStake
         )
 
-        // Update separate state flows for immediate UI response
-        _confirmationData.value = data
-        _showConfirmation.value = true
-        Log.d(TAG, "Separate states updated: show=${_showConfirmation.value}")
-
         _uiState.update {
             it.copy(
                 showBetConfirmation = true,
                 betConfirmationData = data
             )
         }
-        Log.d(TAG, "UiState updated: showBetConfirmation=${_uiState.value.showBetConfirmation}")
     }
 
     /**
      * Dismiss bet confirmation bottom sheet.
      */
     fun dismissBetConfirmation() {
-        _showConfirmation.value = false
-        _confirmationData.value = null
         _uiState.update {
             it.copy(
                 showBetConfirmation = false,
@@ -453,11 +420,12 @@ class MarketDetailViewModel @Inject constructor(
                     commenceTime = confirmationData.commenceTime
                 )
 
-                // Insert bet into database
-                val betId = betDao.insertBet(bet)
-
-                // Subtract stake from wallet
-                walletDao.subtractFunds(confirmationData.stake)
+                // ATOMIC: Insert bet and subtract stake in a single transaction
+                val betId = database.withTransaction {
+                    val id = betDao.insertBet(bet)
+                    walletDao.subtractFunds(confirmationData.stake)
+                    id
+                }
 
                 // Schedule settlement worker to check match result
                 SmartSettlementWorker.scheduleSettlement(
@@ -510,31 +478,6 @@ class MarketDetailViewModel @Inject constructor(
             awayOdds = outcomes.find { it.name == event.awayTeam }?.price ?: 2.0,
             league = event.sportTitle,
             commenceTime = event.commenceTime
-        )
-    }
-
-    private fun generateDemoAnalysis(match: OddsEvent): AIAnalysisResponse {
-        val isValue = kotlin.random.Random.nextFloat() > 0.4
-        val recommendation = listOf("HOME", "AWAY", "DRAW").random()
-
-        return AIAnalysisResponse(
-            recommendation = if (isValue) recommendation else "NO_BET",
-            confidenceScore = if (isValue) 0.6 + kotlin.random.Random.nextFloat() * 0.3 else 0.4,
-            isValueBet = isValue,
-            rationale = if (isValue) {
-                "Analysis indicates a ${(5 + kotlin.random.Random.nextInt(10))}% edge on ${
-                    when (recommendation) {
-                        "HOME" -> match.homeTeam
-                        "AWAY" -> match.awayTeam
-                        else -> "Draw"
-                    }
-                } based on recent form and head-to-head data."
-            } else {
-                "Market odds appear fairly priced. No significant edge detected."
-            },
-            projectedProbability = 0.45 + kotlin.random.Random.nextFloat() * 0.2,
-            edgePercentage = if (isValue) 5.0 + kotlin.random.Random.nextDouble() * 10 else -2.0,
-            suggestedStake = if (isValue) kotlin.random.Random.nextInt(1, 4) else 0
         )
     }
 

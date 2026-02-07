@@ -9,11 +9,6 @@ import com.quickodds.app.ai.model.*
 import com.quickodds.app.ai.model.KellyCriterionCalculator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
-import java.util.concurrent.TimeUnit
 
 /**
  * AI Analysis Service using Claude via Firebase Function.
@@ -23,30 +18,10 @@ import java.util.concurrent.TimeUnit
  *
  * The API key is stored securely in Firebase and never exposed to the client.
  */
-class AIAnalysisService {
-    private val gson = Gson()
+class AIAnalysisService(
     private val api: AnthropicApi
-
-    init {
-        val loggingInterceptor = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
-        }
-
-        val okHttpClient = OkHttpClient.Builder()
-            .addInterceptor(loggingInterceptor)
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .build()
-
-        val retrofit = Retrofit.Builder()
-            .baseUrl(AnthropicApi.BASE_URL)
-            .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-
-        api = retrofit.create(AnthropicApi::class.java)
-    }
+) {
+    private val gson = Gson()
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // MODEL SWITCHING - Cost Optimization

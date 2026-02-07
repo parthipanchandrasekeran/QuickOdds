@@ -23,6 +23,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickodds.app.ai.model.*
+import com.quickodds.app.ui.theme.GreenValue
+import com.quickodds.app.ui.theme.OrangeWarning
 import kotlinx.coroutines.delay
 
 /**
@@ -104,9 +106,9 @@ fun AnalysisDashboard(
 @Composable
 fun EnsembleConsensusBadge(ensemble: EnsembleAnalysis) {
     val consensusColor = if (ensemble.consensusReached) {
-        Color(0xFF4CAF50) // Green
+        GreenValue // Green
     } else {
-        Color(0xFFFF9800) // Orange
+        OrangeWarning // Orange
     }
 
     Card(
@@ -163,7 +165,7 @@ private fun AgentIcon(name: String, findsValue: Boolean) {
         "Scout" -> Icons.Default.Search
         else -> Icons.Default.TrendingUp
     }
-    val color = if (findsValue) Color(0xFF4CAF50) else Color(0xFFE57373)
+    val color = if (findsValue) GreenValue else Color(0xFFE57373)
 
     Box(
         modifier = Modifier
@@ -197,7 +199,7 @@ fun EdgeGauge(
     )
 
     val gaugeColor = if (edgePercentage > 0) {
-        Color(0xFF4CAF50) // Green for +EV
+        GreenValue // Green for +EV
     } else {
         Color(0xFFE57373) // Red for -EV
     }
@@ -252,7 +254,7 @@ fun EdgeGauge(
                             colors = listOf(
                                 Color(0xFFE57373),
                                 Color(0xFFFFB74D),
-                                Color(0xFF4CAF50)
+                                GreenValue
                             )
                         ),
                         startAngle = 135f,
@@ -317,7 +319,7 @@ fun ConfidenceMeter(
     }
 
     val confidenceColor = when {
-        confidenceScore >= 0.7 -> Color(0xFF4CAF50)
+        confidenceScore >= 0.7 -> GreenValue
         confidenceScore >= 0.5 -> Color(0xFFFFB74D)
         else -> Color(0xFFE57373)
     }
@@ -655,7 +657,7 @@ fun KellySlipCard(
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = when (aiAnalysis.recommendation) {
-                        "HOME" -> Color(0xFF4CAF50)
+                        "HOME" -> GreenValue
                         "AWAY" -> Color(0xFF2196F3)
                         "DRAW" -> Color(0xFFFFB74D)
                         else -> Color.Gray
@@ -693,7 +695,7 @@ fun KellySlipCard(
                     subValue = "${(aiAnalysis.confidenceScore * 100).toInt()}%",
                     icon = Icons.Default.Psychology,
                     valueColor = when (confidenceLevel) {
-                        "HIGH" -> Color(0xFF4CAF50)
+                        "HIGH" -> GreenValue
                         "MEDIUM" -> Color(0xFFFFB74D)
                         else -> Color(0xFFE57373)
                     }
@@ -705,7 +707,7 @@ fun KellySlipCard(
                     value = "${if (expectedReturn > 0) "+" else ""}${String.format("%.1f", expectedReturn)}%",
                     subValue = "edge",
                     icon = Icons.Default.TrendingUp,
-                    valueColor = if (expectedReturn > 0) Color(0xFF4CAF50) else Color(0xFFE57373)
+                    valueColor = if (expectedReturn > 0) GreenValue else Color(0xFFE57373)
                 )
             }
 
@@ -911,14 +913,14 @@ private fun AgentRow(
     emoji: String,
     perspective: AgentPerspective
 ) {
-    val valueColor = if (perspective.findsValue) Color(0xFF4CAF50) else Color(0xFFE57373)
+    val valueColor = if (perspective.findsValue) GreenValue else Color(0xFFE57373)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(
-                if (perspective.findsValue) Color(0xFF4CAF50).copy(alpha = 0.1f)
+                if (perspective.findsValue) GreenValue.copy(alpha = 0.1f)
                 else Color(0xFFE57373).copy(alpha = 0.1f)
             )
             .padding(12.dp),

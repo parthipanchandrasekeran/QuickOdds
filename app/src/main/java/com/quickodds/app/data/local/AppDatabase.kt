@@ -1,20 +1,19 @@
 package com.quickodds.app.data.local
 
-import android.content.Context
 import androidx.room.Database
-import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.quickodds.app.data.local.dao.*
 import com.quickodds.app.data.local.entity.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /**
  * Room Database for Quick Odds app.
  * Manages virtual wallet, betting data, and cached markets.
+ *
+ * NOTE: The database instance is provided via Hilt in AppModule.
+ * Do NOT use a manual singleton companion object here.
  */
 @Database(
     entities = [
@@ -27,8 +26,8 @@ import kotlinx.coroutines.launch
         OddsCacheMetadata::class,
         CachedAnalysisEntity::class
     ],
-    version = 4,
-    exportSchema = false
+    version = 5,
+    exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
@@ -41,44 +40,15 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun cachedAnalysisDao(): CachedAnalysisDao
 
     companion object {
-        private const val DATABASE_NAME = "quickodds_db"
-
-        @Volatile
-        private var INSTANCE: AppDatabase? = null
-
-        fun getInstance(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    DATABASE_NAME
-                )
-                    .addCallback(DatabaseCallback())
-                    .fallbackToDestructiveMigration() // Dev only - use migrations in production
-                    .build()
-
-                INSTANCE = instance
-                instance
-            }
-        }
+        const val DATABASE_NAME = "quickodds_db"
 
         /**
-         * Callback to initialize database with default data.
+         * Migration from v4 to v5: No schema changes, only code-level additions (VOID status).
+         * Room stores enums as strings, so adding a new enum value requires no SQL changes.
          */
-        private class DatabaseCallback : Callback() {
-            override fun onCreate(db: SupportSQLiteDatabase) {
-                super.onCreate(db)
-                INSTANCE?.let { database ->
-                    CoroutineScope(Dispatchers.IO).launch {
-                        // Initialize default wallet
-                        database.userWalletDao().insertWallet(
-                            UserWallet.createDefault(
-                                initialBalance = 10000.0,
-                                currency = "USD"
-                            )
-                        )
-                    }
-                }
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // No schema changes needed - VOID is a new enum value stored as string
             }
         }
     }

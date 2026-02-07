@@ -18,6 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.quickodds.app.data.local.entity.UserWallet
 import com.quickodds.app.ui.components.*
+import com.quickodds.app.ui.theme.GreenValue
+import com.quickodds.app.ui.theme.OrangeWarning
 
 /**
  * Dashboard Screen - Main entry point of the app.
@@ -158,7 +160,7 @@ private fun QuickStatsRow(
             title = "Value Bets",
             value = valueBetsFound.toString(),
             icon = Icons.Filled.Star,
-            color = Color(0xFF4CAF50),
+            color = GreenValue,
             modifier = Modifier.weight(1f)
         )
     }
@@ -245,7 +247,7 @@ private fun QuickActionsGrid(
                 title = "My Bets",
                 subtitle = "View history",
                 icon = Icons.Filled.Receipt,
-                color = Color(0xFFFF9800),
+                color = OrangeWarning,
                 onClick = onBetsClick,
                 modifier = Modifier.weight(1f)
             )
@@ -253,7 +255,7 @@ private fun QuickActionsGrid(
                 title = "Wallet",
                 subtitle = "Manage funds",
                 icon = Icons.Filled.AccountBalanceWallet,
-                color = Color(0xFF4CAF50),
+                color = GreenValue,
                 onClick = onWalletClick,
                 modifier = Modifier.weight(1f)
             )

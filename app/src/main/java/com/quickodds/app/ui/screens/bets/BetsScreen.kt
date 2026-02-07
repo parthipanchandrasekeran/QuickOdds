@@ -15,6 +15,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.quickodds.app.ui.theme.GreenValue
+import com.quickodds.app.ui.theme.OrangeWarning
+import com.quickodds.app.ui.theme.RedLoss
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.quickodds.app.data.local.entity.BetStatus
 import com.quickodds.app.data.local.entity.VirtualBet
@@ -237,12 +240,12 @@ private fun BetStatsCard(viewModel: BetViewModel) {
                 StatItem(
                     label = "Won",
                     value = stats.wonBets.toString(),
-                    color = Color(0xFF4CAF50)
+                    color = GreenValue
                 )
                 StatItem(
                     label = "Lost",
                     value = stats.lostBets.toString(),
-                    color = Color(0xFFF44336)
+                    color = RedLoss
                 )
                 StatItem(
                     label = "Win Rate",
@@ -271,7 +274,7 @@ private fun BetStatsCard(viewModel: BetViewModel) {
                         text = "${if (stats.netProfit >= 0) "+" else ""}$${String.format("%.2f", stats.netProfit)}",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (stats.netProfit >= 0) Color(0xFF4CAF50) else Color(0xFFF44336)
+                        color = if (stats.netProfit >= 0) GreenValue else RedLoss
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
@@ -321,15 +324,17 @@ private fun BetCard(
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
 
     val statusColor = when (bet.status) {
-        BetStatus.PENDING -> Color(0xFFFF9800)
-        BetStatus.WON -> Color(0xFF4CAF50)
-        BetStatus.LOST -> Color(0xFFF44336)
+        BetStatus.PENDING -> OrangeWarning
+        BetStatus.WON -> GreenValue
+        BetStatus.LOST -> RedLoss
+        BetStatus.VOID -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     val statusIcon = when (bet.status) {
         BetStatus.PENDING -> Icons.Outlined.Schedule
         BetStatus.WON -> Icons.Filled.CheckCircle
         BetStatus.LOST -> Icons.Filled.Cancel
+        BetStatus.VOID -> Icons.Outlined.Block
     }
 
     Card(
@@ -433,7 +438,7 @@ private fun BetCard(
                         text = "$${String.format("%.2f", bet.stakeAmount * bet.odds)}",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (bet.status == BetStatus.WON) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (bet.status == BetStatus.WON) GreenValue else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

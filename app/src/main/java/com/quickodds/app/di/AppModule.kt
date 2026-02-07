@@ -2,7 +2,7 @@ package com.quickodds.app.di
 
 import android.content.Context
 import androidx.room.Room
-import androidx.sqlite.db.SupportSQLiteDatabase
+import com.quickodds.app.AppConfig
 import com.quickodds.app.BuildConfig
 import com.quickodds.app.ai.AIAnalysisService
 import com.quickodds.app.ai.api.AnthropicApi
@@ -21,9 +21,6 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import okhttp3.Cache
 import okhttp3.CacheControl
 import okhttp3.Interceptor
@@ -36,9 +33,6 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
 
-/**
- * Qualifier annotations for different API keys.
- */
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class OddsApiKey
@@ -47,9 +41,6 @@ annotation class OddsApiKey
 @Retention(AnnotationRetention.BINARY)
 annotation class AnthropicApiKey
 
-/**
- * Qualifier for different Retrofit instances.
- */
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class OddsRetrofit
@@ -62,14 +53,6 @@ annotation class AnthropicRetrofit
 @Retention(AnnotationRetention.BINARY)
 annotation class CloudFunctionRetrofit
 
-/**
- * Hilt Module providing all app dependencies.
- *
- * Provides:
- * - Room Database and DAOs
- * - Retrofit services (Sports Odds API, Anthropic Claude API)
- * - AI Analysis Service
- */
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
@@ -78,35 +61,20 @@ object AppModule {
 
     @Provides
     @OddsApiKey
-    fun provideOddsApiKey(): String {
-        return BuildConfig.ODDS_API_KEY.ifEmpty {
-            // Fallback for development - replace with your key or use local.properties
-            ""
-        }
-    }
+    fun provideOddsApiKey(): String = BuildConfig.ODDS_API_KEY.ifEmpty { "" }
 
     @Provides
     @AnthropicApiKey
-    fun provideAnthropicApiKey(): String {
-        return BuildConfig.ANTHROPIC_API_KEY.ifEmpty {
-            // Fallback for development - replace with your key or use local.properties
-            ""
-        }
-    }
+    fun provideAnthropicApiKey(): String = BuildConfig.ANTHROPIC_API_KEY.ifEmpty { "" }
 
-    // ============ OKHTTP CACHE ============
-
-    private const val CACHE_SIZE = 10L * 1024 * 1024  // 10 MB
-    private const val ODDS_CACHE_MAX_AGE_MINUTES = 15  // 15 minutes for odds requests
+    // ============ OKHTTP ============
 
     @Provides
     @Singleton
     fun provideCache(@ApplicationContext context: Context): Cache {
         val cacheDir = File(context.cacheDir, "http_cache")
-        return Cache(cacheDir, CACHE_SIZE)
+        return Cache(cacheDir, AppConfig.HTTP_CACHE_SIZE_BYTES)
     }
-
-    // ============ OKHTTP CLIENT ============
 
     @Provides
     @Singleton
@@ -122,16 +90,14 @@ object AppModule {
             }
         }
 
-        // Caching interceptor - adds cache headers to odds responses
         val cachingInterceptor = Interceptor { chain ->
             val request = chain.request()
             val response = chain.proceed(request)
 
-            // Apply caching for odds endpoints
             if (request.url.toString().contains("/odds") ||
                 request.url.toString().contains("/sports")) {
                 val cacheControl = CacheControl.Builder()
-                    .maxAge(ODDS_CACHE_MAX_AGE_MINUTES, TimeUnit.MINUTES)
+                    .maxAge(AppConfig.CACHE_STALE_MINUTES, TimeUnit.MINUTES)
                     .build()
 
                 response.newBuilder()
@@ -144,14 +110,12 @@ object AppModule {
             }
         }
 
-        // Offline cache interceptor - serve from cache when offline
         val offlineCacheInterceptor = Interceptor { chain ->
             var request = chain.request()
 
-            // If no network, force cache
             if (!isNetworkAvailable(context)) {
                 val cacheControl = CacheControl.Builder()
-                    .maxStale(24, TimeUnit.HOURS)
+                    .maxStale(AppConfig.OFFLINE_CACHE_HOURS, TimeUnit.HOURS)
                     .build()
 
                 request = request.newBuilder()
@@ -164,18 +128,15 @@ object AppModule {
 
         return OkHttpClient.Builder()
             .cache(cache)
-            .addInterceptor(offlineCacheInterceptor)  // Request interceptor (before network)
-            .addNetworkInterceptor(cachingInterceptor)  // Response interceptor (after network)
+            .addInterceptor(offlineCacheInterceptor)
+            .addNetworkInterceptor(cachingInterceptor)
             .addInterceptor(loggingInterceptor)
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(AppConfig.NETWORK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .readTimeout(AppConfig.NETWORK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .writeTimeout(AppConfig.NETWORK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build()
     }
 
-    /**
-     * Check if network is available.
-     */
     private fun isNetworkAvailable(context: Context): Boolean {
         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
                 as android.net.ConnectivityManager
@@ -184,7 +145,7 @@ object AppModule {
         return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    // ============ RETROFIT - SPORTS ODDS API ============
+    // ============ RETROFIT INSTANCES ============
 
     @Provides
     @Singleton
@@ -203,8 +164,6 @@ object AppModule {
         return retrofit.create(SportsApiService::class.java)
     }
 
-    // ============ RETROFIT - CLOUD FUNCTION (SECURE PROXY) ============
-
     @Provides
     @Singleton
     @CloudFunctionRetrofit
@@ -221,8 +180,6 @@ object AppModule {
     fun provideOddsCloudFunctionService(@CloudFunctionRetrofit retrofit: Retrofit): OddsCloudFunctionService {
         return retrofit.create(OddsCloudFunctionService::class.java)
     }
-
-    // ============ RETROFIT - ANTHROPIC CLAUDE API ============
 
     @Provides
     @Singleton
@@ -245,9 +202,8 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideAIAnalysisService(): AIAnalysisService {
-        // API key is now stored securely in Firebase, no local key needed
-        return AIAnalysisService()
+    fun provideAIAnalysisService(api: AnthropicApi): AIAnalysisService {
+        return AIAnalysisService(api)
     }
 
     // ============ ROOM DATABASE ============
@@ -260,61 +216,40 @@ object AppModule {
         return Room.databaseBuilder(
             context.applicationContext,
             AppDatabase::class.java,
-            "quickodds_db"
+            AppDatabase.DATABASE_NAME
         )
-            .addCallback(object : androidx.room.RoomDatabase.Callback() {
-                override fun onCreate(db: SupportSQLiteDatabase) {
-                    super.onCreate(db)
-                    // Initialize default wallet on first database creation
-                    CoroutineScope(Dispatchers.IO).launch {
-                        // Note: We need to get the DAO after the database is created
-                        // This is handled by the database callback mechanism
-                    }
-                }
-            })
-            .fallbackToDestructiveMigration() // Dev only - use proper migrations in production
+            .addMigrations(AppDatabase.MIGRATION_4_5)
+            .fallbackToDestructiveMigrationOnDowngrade()
             .build()
     }
 
     @Provides
     @Singleton
-    fun provideUserWalletDao(database: AppDatabase): UserWalletDao {
-        return database.userWalletDao()
-    }
+    fun provideUserWalletDao(database: AppDatabase): UserWalletDao = database.userWalletDao()
 
     @Provides
     @Singleton
-    fun provideVirtualBetDao(database: AppDatabase): VirtualBetDao {
-        return database.virtualBetDao()
-    }
+    fun provideVirtualBetDao(database: AppDatabase): VirtualBetDao = database.virtualBetDao()
 
     @Provides
     @Singleton
-    fun provideCachedMarketDao(database: AppDatabase): CachedMarketDao {
-        return database.cachedMarketDao()
-    }
+    fun provideCachedMarketDao(database: AppDatabase): CachedMarketDao = database.cachedMarketDao()
 
     @Provides
     @Singleton
-    fun provideFavoriteMarketDao(database: AppDatabase): FavoriteMarketDao {
-        return database.favoriteMarketDao()
-    }
+    fun provideFavoriteMarketDao(database: AppDatabase): FavoriteMarketDao = database.favoriteMarketDao()
 
     @Provides
     @Singleton
-    fun provideCachedOddsEventDao(database: AppDatabase): CachedOddsEventDao {
-        return database.cachedOddsEventDao()
-    }
+    fun provideCachedOddsEventDao(database: AppDatabase): CachedOddsEventDao = database.cachedOddsEventDao()
 
     @Provides
     @Singleton
-    fun provideCachedAnalysisDao(database: AppDatabase): CachedAnalysisDao {
-        return database.cachedAnalysisDao()
-    }
+    fun provideCachedAnalysisDao(database: AppDatabase): CachedAnalysisDao = database.cachedAnalysisDao()
 }
 
 /**
- * Module for initializing database data.
+ * Module for database initialization.
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -330,7 +265,8 @@ object DatabaseInitModule {
 }
 
 /**
- * Helper class to initialize database with default data.
+ * Initializes database with default data on first run.
+ * This is the SINGLE source of truth for wallet initialization.
  */
 class DatabaseInitializer(
     private val userWalletDao: UserWalletDao
@@ -340,10 +276,13 @@ class DatabaseInitializer(
         if (existingWallet == null) {
             userWalletDao.insertWallet(
                 UserWallet(
-                    balance = 10000.0,
-                    currency = "USD"
+                    balance = AppConfig.INITIAL_WALLET_BALANCE,
+                    currency = AppConfig.DEFAULT_CURRENCY
                 )
             )
+        } else if (existingWallet.balance == 10000.0) {
+            // One-time fix: reset balance from old default to new default
+            userWalletDao.setBalance(AppConfig.INITIAL_WALLET_BALANCE)
         }
     }
 }

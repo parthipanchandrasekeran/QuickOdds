@@ -14,11 +14,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import com.quickodds.app.data.local.entity.UserWallet
+import com.quickodds.app.ui.theme.GreenValue
+import com.quickodds.app.ui.theme.RedLoss
 
 /**
  * Wallet header component displaying user's virtual balance.
@@ -180,13 +182,13 @@ fun WalletStatsRow(
             label = "Won",
             value = "+${formatCurrency(totalWon, "USD")}",
             icon = Icons.Filled.TrendingUp,
-            color = Color(0xFF4CAF50)
+            color = GreenValue
         )
         WalletStatItem(
             label = "Lost",
             value = "-${formatCurrency(totalLost, "USD")}",
             icon = Icons.Filled.TrendingDown,
-            color = Color(0xFFF44336)
+            color = RedLoss
         )
         WalletStatItem(
             label = "Pending",
