@@ -97,11 +97,7 @@ class MarketViewModel @Inject constructor(
 
     /**
      * Load matches for the selected sport.
-     * Implements 15-minute cache-first strategy to save API credits.
-     * 1. Check if cache is fresh (< 15 min old)
-     * 2. If fresh, return cached data
-     * 3. If stale or empty, fetch from API
-     * 4. Falls back to mock data if API fails
+     * Shows cached/mock data instantly, then refreshes from API in the background.
      */
     fun loadMatches() {
         viewModelScope.launch {
@@ -109,88 +105,52 @@ class MarketViewModel @Inject constructor(
 
             try {
                 val sportKey = _uiState.value.selectedSport
-                var matches: List<OddsEvent> = emptyList()
-                var isLiveData = false
-                var fromCache = false
 
-                // Run all I/O work off main thread
-                withContext(Dispatchers.IO) {
-                    // Step 1: Check if cache is fresh (15-minute stale time)
-                    val shouldFetch = cachedOddsEventDao.shouldFetchFromApi(sportKey)
-                    Log.d(TAG, "Sport: $sportKey, shouldFetchFromApi: $shouldFetch")
-
-                    if (!shouldFetch) {
-                        // Cache is fresh - return cached data
-                        val cachedEvents = cachedOddsEventDao.getEventsBySport(sportKey)
-                        matches = cachedEvents.mapNotNull { it.toOddsEvent() }
-
-                        if (matches.isNotEmpty()) {
-                            Log.d(TAG, "Returning ${matches.size} cached events for $sportKey (saving API credits)")
-                            isLiveData = true  // Cached live data is still live data
-                            fromCache = true
-                        }
-                    }
-
-                    // Step 2: If cache is stale or empty, fetch from API
-                    if (matches.isEmpty()) {
-                        Log.d(TAG, "Cache empty or stale, fetching from API for $sportKey")
-                        try {
-                            val response = cloudFunctionService.getUpcomingOdds(
-                                sportKey = sportKey,
-                                regions = "us,uk,eu",
-                                markets = "h2h",  // Only request h2h market to save credits
-                                oddsFormat = "decimal"
-                            )
-
-                            if (response.isSuccessful && !response.body().isNullOrEmpty()) {
-                                matches = response.body()!!
-                                isLiveData = true
-
-                                // Cache the fresh data
-                                val cachedEntities = matches.map { CachedOddsEventEntity.fromOddsEvent(it) }
-                                cachedOddsEventDao.refreshEvents(sportKey, cachedEntities)
-                                Log.d(TAG, "Fetched and cached ${matches.size} events from API for $sportKey")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "API call failed: ${e.message}")
-
-                            // Try to serve stale cache if available
-                            val cachedEvents = cachedOddsEventDao.getEventsBySport(sportKey)
-                            if (cachedEvents.isNotEmpty()) {
-                                matches = cachedEvents.mapNotNull { it.toOddsEvent() }
-                                isLiveData = true
-                                fromCache = true
-                                Log.d(TAG, "Serving stale cache (${matches.size} events) due to API error")
-                            }
-                        }
-                    }
-
-                    // Step 3: Fall back to mock data if no live data available
-                    if (matches.isEmpty()) {
-                        matches = MockOddsDataSource.getMatches(sportKey)
-                        isLiveData = false
-                        Log.d(TAG, "Using mock data for $sportKey")
-                    }
-
-                    // Sort by commenceTime so nearest matches appear first
-                    matches = matches.sortedBy { it.commenceTime }
+                // Step 1: Show cached or mock data immediately
+                val immediateData = withContext(Dispatchers.IO) {
+                    val cachedEvents = cachedOddsEventDao.getEventsBySport(sportKey)
+                    val cached = cachedEvents.mapNotNull { it.toOddsEvent() }
+                    if (cached.isNotEmpty()) cached else null
                 }
 
-                // Initialize match states
-                val matchStates = matches.associate { it.id to MatchCardState() }
+                if (immediateData != null) {
+                    val sorted = immediateData.sortedBy { it.commenceTime }
+                    val matchStates = preserveMatchStates(sorted)
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            matches = sorted,
+                            matchStates = matchStates,
+                            isUsingLiveData = true,
+                            error = null
+                        )
+                    }
+                    Log.d(TAG, "Showing ${sorted.size} cached events for $sportKey instantly")
+                } else {
+                    // No cache — show mock data instantly
+                    val mock = withContext(Dispatchers.IO) {
+                        MockOddsDataSource.getMatches(sportKey).sortedBy { it.commenceTime }
+                    }
+                    val matchStates = preserveMatchStates(mock)
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            matches = mock,
+                            matchStates = matchStates,
+                            isUsingLiveData = false,
+                            error = "Using demo data"
+                        )
+                    }
+                    Log.d(TAG, "Showing mock data for $sportKey instantly")
+                }
 
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        matches = matches,
-                        matchStates = matchStates,
-                        isUsingLiveData = isLiveData,
-                        error = when {
-                            !isLiveData -> "Using demo data"
-                            fromCache -> "Using cached data (< 15 min old)"
-                            else -> null
-                        }
-                    )
+                // Step 2: Check if API refresh is needed, do it in background
+                val shouldFetch = withContext(Dispatchers.IO) {
+                    cachedOddsEventDao.shouldFetchFromApi(sportKey)
+                }
+
+                if (shouldFetch) {
+                    refreshFromApi(sportKey)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading matches", e)
@@ -202,6 +162,56 @@ class MarketViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Refresh data from API in the background without blocking the UI.
+     */
+    private suspend fun refreshFromApi(sportKey: String) {
+        try {
+            Log.d(TAG, "Background refresh from API for $sportKey")
+            val response = withContext(Dispatchers.IO) {
+                cloudFunctionService.getUpcomingOdds(
+                    sportKey = sportKey,
+                    regions = "us,uk,eu",
+                    markets = "h2h",
+                    oddsFormat = "decimal"
+                )
+            }
+
+            if (response.isSuccessful && !response.body().isNullOrEmpty()) {
+                val freshMatches = response.body()!!.sortedBy { it.commenceTime }
+
+                // Cache the fresh data
+                withContext(Dispatchers.IO) {
+                    val cachedEntities = freshMatches.map { CachedOddsEventEntity.fromOddsEvent(it) }
+                    cachedOddsEventDao.refreshEvents(sportKey, cachedEntities)
+                }
+                Log.d(TAG, "Fetched and cached ${freshMatches.size} events from API for $sportKey")
+
+                // Update UI with fresh data, preserving any existing analysis states
+                val matchStates = preserveMatchStates(freshMatches)
+                _uiState.update {
+                    it.copy(
+                        matches = freshMatches,
+                        matchStates = matchStates,
+                        isUsingLiveData = true,
+                        error = null
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Background API refresh failed: ${e.message}")
+            // Don't update UI error — we already have data showing
+        }
+    }
+
+    /**
+     * Preserve existing match analysis states when updating the match list.
+     */
+    private fun preserveMatchStates(matches: List<OddsEvent>): Map<String, MatchCardState> {
+        val existing = _uiState.value.matchStates
+        return matches.associate { it.id to (existing[it.id] ?: MatchCardState()) }
     }
 
     /**
