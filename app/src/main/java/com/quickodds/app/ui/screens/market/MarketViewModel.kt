@@ -5,6 +5,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickodds.app.ai.AIAnalysisService
 import com.quickodds.app.ai.model.*
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.quickodds.app.data.local.dao.CachedAnalysisDao
 import com.quickodds.app.data.local.dao.CachedOddsEventDao
 import com.quickodds.app.data.local.dao.UserWalletDao
@@ -14,6 +17,7 @@ import com.quickodds.app.data.local.entity.CachedOddsEventEntity
 import com.quickodds.app.data.remote.api.OddsCloudFunctionService
 import com.quickodds.app.data.remote.dto.OddsEvent
 import com.quickodds.app.data.remote.MockOddsDataSource
+import com.quickodds.app.data.repository.TeamFormRepository
 import com.quickodds.app.ui.components.MatchCardState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -30,18 +34,23 @@ data class MarketUiState(
     val wallet: UserWallet? = null,
     val matches: List<OddsEvent> = emptyList(),
     val matchStates: Map<String, MatchCardState> = emptyMap(),
-    val selectedSport: String = "soccer_epl",
+    val selectedSport: String = "basketball_nba",
     val availableSports: List<SportOption> = defaultSports,
     val error: String? = null,
     val isUsingLiveData: Boolean = false,
-    val isAnalyzingAll: Boolean = false
+    val isAnalyzingAll: Boolean = false,
+    val isScanningAll: Boolean = false,
+    val scanProgress: Int = 0,
+    val scanTotal: Int = 0,
+    val lastScanCompleted: Long? = null,
+    val valueBetsFound: Int = 0
 ) {
     companion object {
         val defaultSports = listOf(
+            SportOption("basketball_nba", "NBA"),
             SportOption("soccer_epl", "Premier League"),
             SportOption("soccer_usa_mls", "MLS"),
             SportOption("americanfootball_nfl", "NFL"),
-            SportOption("basketball_nba", "NBA"),
             SportOption("soccer_spain_la_liga", "La Liga"),
             SportOption("soccer_germany_bundesliga", "Bundesliga"),
             SportOption("soccer_italy_serie_a", "Serie A"),
@@ -71,7 +80,8 @@ class MarketViewModel @Inject constructor(
     private val cloudFunctionService: OddsCloudFunctionService,
     private val analysisService: AIAnalysisService,
     private val cachedOddsEventDao: CachedOddsEventDao,
-    private val cachedAnalysisDao: CachedAnalysisDao
+    private val cachedAnalysisDao: CachedAnalysisDao,
+    private val teamFormRepository: TeamFormRepository
 ) : ViewModel() {
 
     companion object {
@@ -179,25 +189,34 @@ class MarketViewModel @Inject constructor(
                 )
             }
 
-            if (response.isSuccessful && !response.body().isNullOrEmpty()) {
-                val freshMatches = response.body()!!.sortedBy { it.commenceTime }
+            if (response.isSuccessful) {
+                val body = response.body().orEmpty()
+                if (body.isNotEmpty()) {
+                    val freshMatches = body.sortedBy { it.commenceTime }
 
-                // Cache the fresh data
-                withContext(Dispatchers.IO) {
-                    val cachedEntities = freshMatches.map { CachedOddsEventEntity.fromOddsEvent(it) }
-                    cachedOddsEventDao.refreshEvents(sportKey, cachedEntities)
-                }
-                Log.d(TAG, "Fetched and cached ${freshMatches.size} events from API for $sportKey")
+                    // Cache the fresh data
+                    withContext(Dispatchers.IO) {
+                        val cachedEntities = freshMatches.map { CachedOddsEventEntity.fromOddsEvent(it) }
+                        cachedOddsEventDao.refreshEvents(sportKey, cachedEntities)
+                    }
+                    Log.d(TAG, "Fetched and cached ${freshMatches.size} events from API for $sportKey")
 
-                // Update UI with fresh data, preserving any existing analysis states
-                val matchStates = preserveMatchStates(freshMatches)
-                _uiState.update {
-                    it.copy(
-                        matches = freshMatches,
-                        matchStates = matchStates,
-                        isUsingLiveData = true,
-                        error = null
-                    )
+                    // Update UI with fresh data, preserving any existing analysis states
+                    val matchStates = preserveMatchStates(freshMatches)
+                    _uiState.update {
+                        it.copy(
+                            matches = freshMatches,
+                            matchStates = matchStates,
+                            isUsingLiveData = true,
+                            error = null
+                        )
+                    }
+                } else {
+                    // API returned empty — off-season or no upcoming matches
+                    Log.d(TAG, "API returned empty for $sportKey (off-season or no upcoming matches)")
+                    _uiState.update {
+                        it.copy(error = "No upcoming matches \u2014 this league may be off-season")
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -262,9 +281,20 @@ class MarketViewModel @Inject constructor(
             // Step 2: No valid cache, call API
             Log.d(TAG, "No cached analysis for $matchId, calling API")
             val matchData = createMatchData(match)
+
+            // Fetch real form data from scores API (graceful fallback to empty)
+            val (homeForm, awayForm) = teamFormRepository.getMatchFormData(
+                sportKey = match.sportKey,
+                homeTeam = match.homeTeam,
+                awayTeam = match.awayTeam
+            )
             val stats = RecentStats(
-                homeTeamForm = "WWLDW",  // Would come from actual stats API
-                awayTeamForm = "LWWDL"
+                homeTeamForm = homeForm?.formString,
+                awayTeamForm = awayForm?.formString,
+                homeGoalsScored = homeForm?.goalsScored,
+                homeGoalsConceded = homeForm?.goalsConceded,
+                awayGoalsScored = awayForm?.goalsScored,
+                awayGoalsConceded = awayForm?.goalsConceded
             )
 
             when (val result = analysisService.analyzeMatch(matchData, stats)) {
@@ -315,19 +345,47 @@ class MarketViewModel @Inject constructor(
     }
 
     private fun createMatchData(event: OddsEvent): MatchData {
-        val bookmaker = event.bookmakers.firstOrNull()
-        val h2hMarket = bookmaker?.markets?.find { it.key == "h2h" }
-        val outcomes = h2hMarket?.outcomes ?: emptyList()
+        // Aggregate odds across ALL bookmakers
+        val homeOddsList = mutableListOf<Pair<String, Double>>() // bookmaker to odds
+        val drawOddsList = mutableListOf<Pair<String, Double>>()
+        val awayOddsList = mutableListOf<Pair<String, Double>>()
+
+        for (bookmaker in event.bookmakers) {
+            val h2h = bookmaker.markets.find { it.key == "h2h" } ?: continue
+            for (outcome in h2h.outcomes) {
+                when {
+                    outcome.name == event.homeTeam -> homeOddsList.add(bookmaker.title to outcome.price)
+                    outcome.name == event.awayTeam -> awayOddsList.add(bookmaker.title to outcome.price)
+                    outcome.name.lowercase() == "draw" -> drawOddsList.add(bookmaker.title to outcome.price)
+                }
+            }
+        }
+
+        // Best odds = highest price (best value for bettor)
+        val bestHome = homeOddsList.maxByOrNull { it.second }
+        val bestDraw = drawOddsList.maxByOrNull { it.second }
+        val bestAway = awayOddsList.maxByOrNull { it.second }
 
         return MatchData(
             eventId = event.id,
             homeTeam = event.homeTeam,
             awayTeam = event.awayTeam,
-            homeOdds = outcomes.find { it.name == event.homeTeam }?.price ?: 2.0,
-            drawOdds = outcomes.find { it.name.lowercase() == "draw" }?.price,
-            awayOdds = outcomes.find { it.name == event.awayTeam }?.price ?: 2.0,
+            homeOdds = bestHome?.second ?: 2.0,
+            drawOdds = bestDraw?.second,
+            awayOdds = bestAway?.second ?: 2.0,
             league = event.sportTitle,
-            commenceTime = event.commenceTime
+            commenceTime = event.commenceTime,
+            bestHomeBookmaker = bestHome?.first,
+            bestDrawBookmaker = bestDraw?.first,
+            bestAwayBookmaker = bestAway?.first,
+            avgHomeOdds = homeOddsList.map { it.second }.average().takeIf { homeOddsList.isNotEmpty() },
+            avgDrawOdds = drawOddsList.map { it.second }.average().takeIf { drawOddsList.isNotEmpty() },
+            avgAwayOdds = awayOddsList.map { it.second }.average().takeIf { awayOddsList.isNotEmpty() },
+            minHomeOdds = homeOddsList.minOfOrNull { it.second },
+            maxHomeOdds = homeOddsList.maxOfOrNull { it.second },
+            minAwayOdds = awayOddsList.minOfOrNull { it.second },
+            maxAwayOdds = awayOddsList.maxOfOrNull { it.second },
+            bookmakerCount = event.bookmakers.size
         )
     }
 
@@ -365,6 +423,120 @@ class MarketViewModel @Inject constructor(
         } catch (e: Exception) {
             false
         }
+    }
+
+    /**
+     * Scan all currently loaded matches using bulk slate analysis (single API call).
+     */
+    fun scanAllMatches() {
+        val matches = _uiState.value.matches
+        if (matches.isEmpty()) return
+
+        _uiState.update { it.copy(isScanningAll = true, scanProgress = 0, scanTotal = matches.size) }
+
+        viewModelScope.launch {
+            try {
+                // Build SlateMatchInput list with real form data
+                val slateInputs = matches.map { match ->
+                    val matchData = createMatchData(match)
+                    val (homeForm, awayForm) = teamFormRepository.getMatchFormData(
+                        sportKey = match.sportKey,
+                        homeTeam = match.homeTeam,
+                        awayTeam = match.awayTeam
+                    )
+                    val stats = RecentStats(
+                        homeTeamForm = homeForm?.formString,
+                        awayTeamForm = awayForm?.formString,
+                        homeGoalsScored = homeForm?.goalsScored,
+                        homeGoalsConceded = homeForm?.goalsConceded,
+                        awayGoalsScored = awayForm?.goalsScored,
+                        awayGoalsConceded = awayForm?.goalsConceded
+                    )
+                    SlateMatchInput(matchData, stats)
+                }
+
+                _uiState.update { it.copy(scanProgress = 1) }
+
+                when (val result = analysisService.analyzeUpcomingSlate(slateInputs)) {
+                    is BulkAnalysisResult.Success -> {
+                        var valueBets = 0
+                        for (betResult in result.results) {
+                            val eventId = betResult.matchData.eventId
+                            val analysis = betResult.aiAnalysis
+                            if (analysis.isValueBet) valueBets++
+
+                            // Cache each result
+                            cachedAnalysisDao.insertAnalysis(
+                                CachedAnalysisEntity.fromAnalysis(eventId, analysis)
+                            )
+
+                            // Update match card state
+                            updateMatchState(eventId) {
+                                it.copy(isAnalyzed = true, analysisResult = analysis)
+                            }
+                        }
+                        _uiState.update {
+                            it.copy(
+                                isScanningAll = false,
+                                scanProgress = matches.size,
+                                lastScanCompleted = System.currentTimeMillis(),
+                                valueBetsFound = valueBets
+                            )
+                        }
+                        Log.d(TAG, "Bulk scan complete: ${result.results.size} analyzed, $valueBets value bets found")
+                    }
+                    is BulkAnalysisResult.PartialSuccess -> {
+                        var valueBets = 0
+                        for (betResult in result.results) {
+                            val eventId = betResult.matchData.eventId
+                            val analysis = betResult.aiAnalysis
+                            if (analysis.isValueBet) valueBets++
+
+                            cachedAnalysisDao.insertAnalysis(
+                                CachedAnalysisEntity.fromAnalysis(eventId, analysis)
+                            )
+                            updateMatchState(eventId) {
+                                it.copy(isAnalyzed = true, analysisResult = analysis)
+                            }
+                        }
+                        _uiState.update {
+                            it.copy(
+                                isScanningAll = false,
+                                scanProgress = matches.size,
+                                lastScanCompleted = System.currentTimeMillis(),
+                                valueBetsFound = valueBets,
+                                error = "${result.failures.size} matches failed to analyze"
+                            )
+                        }
+                        Log.d(TAG, "Bulk scan partial: ${result.results.size} ok, ${result.failures.size} failed")
+                    }
+                    is BulkAnalysisResult.Error -> {
+                        _uiState.update {
+                            it.copy(
+                                isScanningAll = false,
+                                error = "Scan failed: ${result.message}"
+                            )
+                        }
+                        Log.e(TAG, "Bulk scan error: ${result.message}")
+                    }
+                    is BulkAnalysisResult.Loading -> { /* no-op */ }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "scanAllMatches error", e)
+                _uiState.update {
+                    it.copy(
+                        isScanningAll = false,
+                        error = "Scan failed: ${e.message}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun formatLastUpdated(timestamp: Long?): String {
+        if (timestamp == null) return "Never"
+        val sdf = SimpleDateFormat("h:mm a", Locale.getDefault())
+        return sdf.format(Date(timestamp))
     }
 
     fun clearError() {

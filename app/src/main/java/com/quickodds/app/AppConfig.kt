@@ -18,8 +18,8 @@ object AppConfig {
     /** HTTP cache size in bytes (10 MB). */
     const val HTTP_CACHE_SIZE_BYTES = 10L * 1024 * 1024
 
-    /** Network timeout in seconds. */
-    const val NETWORK_TIMEOUT_SECONDS = 30L
+    /** Network timeout in seconds (120s for bulk AI analysis of 10+ matches). */
+    const val NETWORK_TIMEOUT_SECONDS = 120L
 
     /** Hours after match start to first check for settlement. */
     const val SETTLEMENT_DELAY_HOURS = 2L

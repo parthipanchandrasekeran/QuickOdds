@@ -28,6 +28,7 @@ import com.quickodds.app.ui.screens.market.MarketDetailScreen
 import com.quickodds.app.ui.screens.market.MarketViewModel
 import com.quickodds.app.ui.screens.market.MarketDetailViewModel
 import com.quickodds.app.ui.theme.QuickOddsTheme
+import com.quickodds.app.ui.screens.accuracy.AccuracyScreen
 import com.quickodds.app.ui.viewmodel.BetViewModel
 
 /**
@@ -271,8 +272,7 @@ fun QuickOddsApp(database: AppDatabase) {
                 }
 
                 composable(Screen.Analysis.route) {
-                    // Custom analysis screen placeholder
-                    Text("Custom Analysis Screen - Coming Soon")
+                    AccuracyScreen()
                 }
             }
         }

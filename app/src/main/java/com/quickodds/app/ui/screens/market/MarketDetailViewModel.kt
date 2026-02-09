@@ -10,15 +10,18 @@ import androidx.room.withTransaction
 import com.quickodds.app.data.local.AppDatabase
 import com.quickodds.app.data.local.dao.CachedAnalysisDao
 import com.quickodds.app.data.local.dao.CachedOddsEventDao
+import com.quickodds.app.data.local.dao.PredictionRecordDao
 import com.quickodds.app.data.local.dao.UserWalletDao
 import com.quickodds.app.data.local.dao.VirtualBetDao
 import com.quickodds.app.data.local.entity.BetStatus
 import com.quickodds.app.data.local.entity.CachedAnalysisEntity
+import com.quickodds.app.data.local.entity.PredictionRecord
 import com.quickodds.app.data.local.entity.UserWallet
 import com.quickodds.app.data.local.entity.VirtualBet
 import com.quickodds.app.data.remote.api.OddsCloudFunctionService
 import com.quickodds.app.data.remote.MockOddsDataSource
 import com.quickodds.app.data.remote.dto.OddsEvent
+import com.quickodds.app.data.repository.TeamFormRepository
 import com.quickodds.app.worker.SmartSettlementWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -82,7 +85,9 @@ class MarketDetailViewModel @Inject constructor(
     private val cloudFunctionService: OddsCloudFunctionService,
     private val analysisService: AIAnalysisService,
     private val cachedOddsEventDao: CachedOddsEventDao,
-    private val cachedAnalysisDao: CachedAnalysisDao
+    private val cachedAnalysisDao: CachedAnalysisDao,
+    private val teamFormRepository: TeamFormRepository,
+    private val predictionRecordDao: PredictionRecordDao
 ) : ViewModel() {
 
     companion object {
@@ -253,9 +258,20 @@ class MarketDetailViewModel @Inject constructor(
                 // Step 2: No valid cache, call API
                 Log.d(TAG, "No cached analysis for $matchId, calling API")
                 val matchData = createMatchData(match)
+
+                // Fetch real form data from scores API (graceful fallback to empty)
+                val (homeForm, awayForm) = teamFormRepository.getMatchFormData(
+                    sportKey = match.sportKey,
+                    homeTeam = match.homeTeam,
+                    awayTeam = match.awayTeam
+                )
                 val stats = RecentStats(
-                    homeTeamForm = "WWLDW",
-                    awayTeamForm = "LWWDL"
+                    homeTeamForm = homeForm?.formString,
+                    awayTeamForm = awayForm?.formString,
+                    homeGoalsScored = homeForm?.goalsScored,
+                    homeGoalsConceded = homeForm?.goalsConceded,
+                    awayGoalsScored = awayForm?.goalsScored,
+                    awayGoalsConceded = awayForm?.goalsConceded
                 )
 
                 when (val result = analysisService.analyzeMatch(matchData, stats)) {
@@ -436,6 +452,39 @@ class MarketDetailViewModel @Inject constructor(
                     commenceTime = confirmationData.commenceTime
                 )
 
+                // Record prediction for accuracy tracking (outside transaction — must not break bet)
+                try {
+                    val analysis = _uiState.value.analysisResult
+                    if (analysis != null) {
+                        val ensemble = analysis.ensembleAnalysis
+                        val record = PredictionRecord(
+                            betId = betId,
+                            eventId = confirmationData.eventId,
+                            sportKey = confirmationData.sportKey,
+                            matchName = confirmationData.matchName,
+                            recommendation = analysis.recommendation,
+                            confidence = analysis.confidenceScore,
+                            projectedProbability = analysis.projectedProbability,
+                            edgePercentage = analysis.edgePercentage,
+                            isValueBet = analysis.isValueBet,
+                            statModelerRecommendation = ensemble?.statisticalModeler?.recommendation,
+                            statModelerEdge = ensemble?.statisticalModeler?.estimatedEdge,
+                            statModelerFindsValue = ensemble?.statisticalModeler?.findsValue,
+                            proScoutRecommendation = ensemble?.proScout?.recommendation,
+                            proScoutEdge = ensemble?.proScout?.estimatedEdge,
+                            proScoutFindsValue = ensemble?.proScout?.findsValue,
+                            marketSharpRecommendation = ensemble?.marketSharp?.recommendation,
+                            marketSharpEdge = ensemble?.marketSharp?.estimatedEdge,
+                            marketSharpFindsValue = ensemble?.marketSharp?.findsValue,
+                            selectedTeam = confirmationData.selection
+                        )
+                        predictionRecordDao.insert(record)
+                        Log.d(TAG, "Recorded prediction for bet $betId")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to record prediction (non-fatal): ${e.message}")
+                }
+
                 _uiState.update {
                     it.copy(
                         isPlacingBet = false,
@@ -465,19 +514,46 @@ class MarketDetailViewModel @Inject constructor(
     }
 
     private fun createMatchData(event: OddsEvent): MatchData {
-        val bookmaker = event.bookmakers.firstOrNull()
-        val h2hMarket = bookmaker?.markets?.find { it.key == "h2h" }
-        val outcomes = h2hMarket?.outcomes ?: emptyList()
+        // Aggregate odds across ALL bookmakers
+        val homeOddsList = mutableListOf<Pair<String, Double>>()
+        val drawOddsList = mutableListOf<Pair<String, Double>>()
+        val awayOddsList = mutableListOf<Pair<String, Double>>()
+
+        for (bookmaker in event.bookmakers) {
+            val h2h = bookmaker.markets.find { it.key == "h2h" } ?: continue
+            for (outcome in h2h.outcomes) {
+                when {
+                    outcome.name == event.homeTeam -> homeOddsList.add(bookmaker.title to outcome.price)
+                    outcome.name == event.awayTeam -> awayOddsList.add(bookmaker.title to outcome.price)
+                    outcome.name.lowercase() == "draw" -> drawOddsList.add(bookmaker.title to outcome.price)
+                }
+            }
+        }
+
+        val bestHome = homeOddsList.maxByOrNull { it.second }
+        val bestDraw = drawOddsList.maxByOrNull { it.second }
+        val bestAway = awayOddsList.maxByOrNull { it.second }
 
         return MatchData(
             eventId = event.id,
             homeTeam = event.homeTeam,
             awayTeam = event.awayTeam,
-            homeOdds = outcomes.find { it.name == event.homeTeam }?.price ?: 2.0,
-            drawOdds = outcomes.find { it.name.lowercase() == "draw" }?.price,
-            awayOdds = outcomes.find { it.name == event.awayTeam }?.price ?: 2.0,
+            homeOdds = bestHome?.second ?: 2.0,
+            drawOdds = bestDraw?.second,
+            awayOdds = bestAway?.second ?: 2.0,
             league = event.sportTitle,
-            commenceTime = event.commenceTime
+            commenceTime = event.commenceTime,
+            bestHomeBookmaker = bestHome?.first,
+            bestDrawBookmaker = bestDraw?.first,
+            bestAwayBookmaker = bestAway?.first,
+            avgHomeOdds = homeOddsList.map { it.second }.average().takeIf { homeOddsList.isNotEmpty() },
+            avgDrawOdds = drawOddsList.map { it.second }.average().takeIf { drawOddsList.isNotEmpty() },
+            avgAwayOdds = awayOddsList.map { it.second }.average().takeIf { awayOddsList.isNotEmpty() },
+            minHomeOdds = homeOddsList.minOfOrNull { it.second },
+            maxHomeOdds = homeOddsList.maxOfOrNull { it.second },
+            minAwayOdds = awayOddsList.minOfOrNull { it.second },
+            maxAwayOdds = awayOddsList.maxOfOrNull { it.second },
+            bookmakerCount = event.bookmakers.size
         )
     }
 

@@ -173,9 +173,10 @@ class AIAnalysisService(
         - Edge threshold: >5% edge required to find value
 
         **AGENT 3: MARKET SHARP** 💹
-        - Focus: Line movement, market signals, where smart money flows
-        - Analyzes: Opening vs current odds, steam moves, reverse line movement
-        - Method: Detect if market is overreacting or underreacting to news
+        - Focus: Line movement, market signals, where smart money flows, cross-bookmaker odds discrepancies
+        - Analyzes: Opening vs current odds, steam moves, reverse line movement, odds spread across books
+        - Method: Detect if market is overreacting or underreacting. Wide odds spread = disagreement = value signal
+        - When multiple bookmakers provided: compare best odds vs consensus to find where books disagree
         - Edge threshold: >5% edge required to find value
 
         **CONSENSUS RULE (CRITICAL):**
@@ -328,6 +329,11 @@ class AIAnalysisService(
         8. Apply 3% fatigue penalty when indicated
         9. When sharp signals detected: Market Sharp agent MUST factor this into recommendation
         10. PRIORITIZE sides with Money % >> Bet % (sharp money indicator)
+        11. ANTI-HALLUCINATION: Do NOT invent team form, W/L records, or statistics that are not provided in the data. If form says "Not available", state that data is limited and rely on odds/market signals
+        12. MISSING FORM DATA: When recent form/statistics are unavailable, cap confidence_score at 0.65 and require edge_percentage > 7% for is_value_bet = TRUE
+        13. Use LEAGUE BASELINE stats as base rates when team-specific data is missing
+        14. Use BEST AVAILABLE ODDS (not average) for Kelly Criterion calculations
+        15. When ODDS SPREAD is wide (>0.3), flag this as bookmaker disagreement in Market Sharp reasoning
     """.trimIndent()
 
     /**
@@ -452,6 +458,10 @@ class AIAnalysisService(
         6. Keep rationale concise (1-2 sentences per match)
         7. When sharp signals detected: Market Sharp agent MUST reference them
         8. PRIORITIZE sides where Money % >> Bet % (sharp money indicator)
+        9. ANTI-HALLUCINATION: Do NOT invent team form or statistics not in the data. If form is unavailable, rely on odds/market signals
+        10. MISSING FORM DATA: Cap confidence_score at 0.65 and require edge > 7% when form is unavailable
+        11. Use LEAGUE BASELINE stats as base rates when team-specific data is missing
+        12. Use BEST AVAILABLE ODDS for Kelly calculations. Flag wide odds spreads (>0.3) as value signals
     """.trimIndent()
 
     /**
@@ -559,19 +569,62 @@ class AIAnalysisService(
         appendLine("LEAGUE: ${matchData.league}")
         appendLine("KICKOFF: ${matchData.commenceTime}")
         appendLine()
-        appendLine("BOOKMAKER ODDS (Decimal):")
-        appendLine("  - ${matchData.homeTeam} (Home): ${matchData.homeOdds}")
-        matchData.drawOdds?.let { appendLine("  - Draw: $it") }
-        appendLine("  - ${matchData.awayTeam} (Away): ${matchData.awayOdds}")
+
+        // Multi-bookmaker odds section
+        appendLine("BEST AVAILABLE ODDS (Decimal) - across ${matchData.bookmakerCount} bookmakers:")
+        appendLine("  - ${matchData.homeTeam} (Home): ${matchData.homeOdds}${matchData.bestHomeBookmaker?.let { " @ $it" } ?: ""}")
+        matchData.drawOdds?.let { appendLine("  - Draw: $it${matchData.bestDrawBookmaker?.let { b -> " @ $b" } ?: ""}") }
+        appendLine("  - ${matchData.awayTeam} (Away): ${matchData.awayOdds}${matchData.bestAwayBookmaker?.let { " @ $it" } ?: ""}")
         appendLine()
-        appendLine("IMPLIED PROBABILITIES:")
+
+        // Market consensus from average odds
+        if (matchData.avgHomeOdds != null && matchData.avgAwayOdds != null) {
+            appendLine("MARKET CONSENSUS (Average odds across ${matchData.bookmakerCount} books):")
+            appendLine("  - Home: ${String.format("%.2f", matchData.avgHomeOdds)}")
+            matchData.avgDrawOdds?.let { appendLine("  - Draw: ${String.format("%.2f", it)}") }
+            appendLine("  - Away: ${String.format("%.2f", matchData.avgAwayOdds)}")
+
+            val consensus = matchData.getConsensusImpliedProbabilities()
+            if (consensus != null) {
+                appendLine("  Consensus Implied Prob: Home ${String.format("%.1f", consensus.home * 100)}%${consensus.draw?.let { " | Draw ${String.format("%.1f", it * 100)}%" } ?: ""} | Away ${String.format("%.1f", consensus.away * 100)}%")
+            }
+            appendLine()
+        }
+
+        // Odds spread (bookmaker disagreement)
+        val spread = matchData.getOddsSpread()
+        if (spread != null && matchData.bookmakerCount > 1) {
+            appendLine("ODDS SPREAD (bookmaker disagreement):")
+            appendLine("  - Home range: ${matchData.minHomeOdds} - ${matchData.maxHomeOdds} (spread: ${String.format("%.2f", spread.first)})")
+            appendLine("  - Away range: ${matchData.minAwayOdds} - ${matchData.maxAwayOdds} (spread: ${String.format("%.2f", spread.third)})")
+            if (spread.first > 0.3 || spread.third > 0.3) {
+                appendLine("  ⚠️ WIDE SPREAD detected - bookmakers disagree, potential value opportunity")
+            }
+            appendLine()
+        }
+
+        appendLine("IMPLIED PROBABILITIES (from best odds):")
         appendLine("  - Home Win: ${String.format("%.1f", impliedProbs.home * 100)}%")
         impliedProbs.draw?.let { appendLine("  - Draw: ${String.format("%.1f", it * 100)}%") }
         appendLine("  - Away Win: ${String.format("%.1f", impliedProbs.away * 100)}%")
         appendLine("  - Bookmaker Margin: ${String.format("%.1f", impliedProbs.bookmakerMargin)}%")
         appendLine()
+
+        // League baseline statistics
+        val baseline = getLeagueBaseline(matchData.league)
+        if (baseline != null) {
+            appendLine("LEAGUE BASELINE STATISTICS:")
+            appendLine("  $baseline")
+            appendLine()
+        }
+
         appendLine("RECENT STATISTICS:")
-        appendLine(recentStats.toAnalysisString())
+        val statsString = recentStats.toAnalysisString()
+        if (statsString.isBlank()) {
+            appendLine("  Not available - rely on odds data, market consensus, and league knowledge")
+        } else {
+            appendLine(statsString)
+        }
 
         // Add fatigue alerts prominently
         val homeFatigue = recentStats.homeTrend?.hasFatigue == true
@@ -606,7 +659,7 @@ class AIAnalysisService(
         }
 
         appendLine()
-        appendLine("Analyze this data with focus on MOMENTUM and FATIGUE factors. Provide your JSON recommendation.")
+        appendLine("Analyze using all bookmaker odds data, market consensus, and odds spread signals. Provide your JSON recommendation.")
     }
 
     /**
@@ -666,6 +719,32 @@ class AIAnalysisService(
     ) {
         val hasFatigueAdjustment: Boolean
             get() = homeFatiguePenalty > 0 || awayFatiguePenalty > 0
+    }
+
+    /**
+     * Get league baseline statistics for use as base rates when form data is unavailable.
+     */
+    private fun getLeagueBaseline(league: String): String? {
+        val normalized = league.lowercase()
+        return when {
+            "premier league" in normalized || "epl" in normalized ->
+                "EPL avg: Home win 46%, Draw 25%, Away win 29%, ~2.7 goals/game"
+            "la liga" in normalized ->
+                "La Liga avg: Home win 47%, Draw 24%, Away win 29%, ~2.5 goals/game"
+            "serie a" in normalized ->
+                "Serie A avg: Home win 45%, Draw 26%, Away win 29%, ~2.6 goals/game"
+            "bundesliga" in normalized ->
+                "Bundesliga avg: Home win 45%, Draw 23%, Away win 32%, ~3.1 goals/game"
+            "ligue 1" in normalized ->
+                "Ligue 1 avg: Home win 46%, Draw 25%, Away win 29%, ~2.6 goals/game"
+            "mls" in normalized ->
+                "MLS avg: Home win 49%, Draw 23%, Away win 28%, ~2.9 goals/game"
+            "nba" in normalized ->
+                "NBA avg: Home win 58%, ~224 points/game. No draws."
+            "nfl" in normalized ->
+                "NFL avg: Home win 57%, ~44 combined points/game. No draws."
+            else -> null
+        }
     }
 
     /**
@@ -762,7 +841,7 @@ class AIAnalysisService(
             val userPrompt = buildBulkUserPrompt(matches)
 
             // Calculate tokens needed: ~800 tokens per match for response
-            val estimatedMaxTokens = minOf(4000, 800 * matches.size)
+            val estimatedMaxTokens = minOf(8192, 800 * matches.size)
 
             val request = MessageRequest(
                 model = AnthropicApi.MODEL_SONNET,
@@ -815,10 +894,17 @@ class AIAnalysisService(
             appendLine("LEAGUE: ${matchData.league}")
             appendLine("KICKOFF: ${matchData.commenceTime}")
             appendLine()
-            appendLine("ODDS (Decimal):")
-            appendLine("  ${matchData.homeTeam} (Home): ${matchData.homeOdds}")
-            matchData.drawOdds?.let { appendLine("  Draw: $it") }
-            appendLine("  ${matchData.awayTeam} (Away): ${matchData.awayOdds}")
+            appendLine("BEST ODDS (${matchData.bookmakerCount} books):")
+            appendLine("  ${matchData.homeTeam} (Home): ${matchData.homeOdds}${matchData.bestHomeBookmaker?.let { " @ $it" } ?: ""}")
+            matchData.drawOdds?.let { appendLine("  Draw: $it${matchData.bestDrawBookmaker?.let { b -> " @ $b" } ?: ""}") }
+            appendLine("  ${matchData.awayTeam} (Away): ${matchData.awayOdds}${matchData.bestAwayBookmaker?.let { " @ $it" } ?: ""}")
+            if (matchData.avgHomeOdds != null) {
+                appendLine("  Avg: Home ${String.format("%.2f", matchData.avgHomeOdds)}${matchData.avgDrawOdds?.let { " | Draw ${String.format("%.2f", it)}" } ?: ""} | Away ${String.format("%.2f", matchData.avgAwayOdds)}")
+            }
+            val spread = matchData.getOddsSpread()
+            if (spread != null && (spread.first > 0.3 || spread.third > 0.3)) {
+                appendLine("  ⚠️ WIDE SPREAD: Home ${String.format("%.2f", spread.first)} | Away ${String.format("%.2f", spread.third)}")
+            }
             appendLine()
             appendLine("IMPLIED PROB:")
             appendLine("  Home: ${String.format("%.1f", impliedProbs.home * 100)}%")
@@ -827,9 +913,15 @@ class AIAnalysisService(
             appendLine("  Margin: ${String.format("%.1f", impliedProbs.bookmakerMargin)}%")
             appendLine()
 
+            // League baseline
+            getLeagueBaseline(matchData.league)?.let { appendLine("LEAGUE: $it") }
+
             // Recent stats summary (condensed for bulk)
             recentStats.homeTeamForm?.let { appendLine("Home Form: $it") }
             recentStats.awayTeamForm?.let { appendLine("Away Form: $it") }
+            if (recentStats.homeTeamForm == null && recentStats.awayTeamForm == null) {
+                appendLine("Form: Not available - use odds data and league baselines")
+            }
             recentStats.headToHead?.let { appendLine("H2H: $it") }
 
             // Momentum summary

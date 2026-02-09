@@ -1,5 +1,6 @@
 package com.quickodds.app.data.remote
 
+import com.quickodds.app.AppConfig
 import com.quickodds.app.domain.model.*
 import kotlinx.coroutines.delay
 
@@ -136,8 +137,8 @@ object MockDataSource {
     }
 
     fun getInitialWallet(): Wallet = Wallet(
-        balance = 10000.0,
-        totalDeposited = 10000.0,
+        balance = AppConfig.INITIAL_WALLET_BALANCE,
+        totalDeposited = AppConfig.INITIAL_WALLET_BALANCE,
         totalWon = 0.0,
         totalLost = 0.0,
         pendingBets = 0.0

@@ -11,6 +11,7 @@ import com.quickodds.app.data.local.dao.CachedAnalysisDao
 import com.quickodds.app.data.local.dao.CachedMarketDao
 import com.quickodds.app.data.local.dao.CachedOddsEventDao
 import com.quickodds.app.data.local.dao.FavoriteMarketDao
+import com.quickodds.app.data.local.dao.PredictionRecordDao
 import com.quickodds.app.data.local.dao.UserWalletDao
 import com.quickodds.app.data.local.dao.VirtualBetDao
 import com.quickodds.app.data.local.entity.UserWallet
@@ -218,7 +219,7 @@ object AppModule {
             AppDatabase::class.java,
             AppDatabase.DATABASE_NAME
         )
-            .addMigrations(AppDatabase.MIGRATION_4_5)
+            .addMigrations(AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6)
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
     }
@@ -246,6 +247,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideCachedAnalysisDao(database: AppDatabase): CachedAnalysisDao = database.cachedAnalysisDao()
+
+    @Provides
+    @Singleton
+    fun providePredictionRecordDao(database: AppDatabase): PredictionRecordDao = database.predictionRecordDao()
 }
 
 /**

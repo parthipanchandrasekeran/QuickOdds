@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.quickodds.app.AppConfig
+import com.quickodds.app.data.local.dao.PredictionRecordDao
 import com.quickodds.app.data.local.dao.UserWalletDao
 import com.quickodds.app.data.local.dao.VirtualBetDao
 import com.quickodds.app.data.local.entity.BetStatus
@@ -32,7 +33,8 @@ class SmartSettlementWorker @AssistedInject constructor(
     @Assisted private val workerParams: WorkerParameters,
     private val betDao: VirtualBetDao,
     private val walletDao: UserWalletDao,
-    private val oddsService: OddsCloudFunctionService
+    private val oddsService: OddsCloudFunctionService,
+    private val predictionRecordDao: PredictionRecordDao
 ) : CoroutineWorker(context, workerParams) {
 
     companion object {
@@ -159,14 +161,25 @@ class SmartSettlementWorker @AssistedInject constructor(
                 is SettlementValidation.Ready -> {
                     Log.d(TAG, "Final score: ${settlementValidation.finalScore}, Winner: ${settlementValidation.actualWinner}")
 
+                    val outcome: String
                     if (settlementValidation.userWon) {
                         betDao.updateBetStatus(betId, BetStatus.WON)
                         val winnings = bet.potentialPayout
                         walletDao.addFunds(winnings)
+                        outcome = "WON"
                         Log.d(TAG, "Bet $betId WON! Added $winnings to wallet")
                     } else {
                         betDao.updateBetStatus(betId, BetStatus.LOST)
+                        outcome = "LOST"
                         Log.d(TAG, "Bet $betId LOST")
+                    }
+
+                    // Record prediction outcome (non-fatal)
+                    try {
+                        predictionRecordDao.recordOutcome(betId, outcome)
+                        Log.d(TAG, "Recorded prediction outcome $outcome for bet $betId")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to record prediction outcome (non-fatal): ${e.message}")
                     }
                 }
             }

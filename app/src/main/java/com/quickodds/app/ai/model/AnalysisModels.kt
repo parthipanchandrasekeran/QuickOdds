@@ -9,17 +9,29 @@ data class MatchData(
     val eventId: String,
     val homeTeam: String,
     val awayTeam: String,
-    val homeOdds: Double,
-    val drawOdds: Double?,          // Null for sports without draws (NBA, NFL)
-    val awayOdds: Double,
+    val homeOdds: Double,               // Best available home odds across all bookmakers
+    val drawOdds: Double?,              // Null for sports without draws (NBA, NFL)
+    val awayOdds: Double,               // Best available away odds
     val league: String,
-    val commenceTime: String
+    val commenceTime: String,
+    // Multi-bookmaker aggregation
+    val bestHomeBookmaker: String? = null,   // Which bookmaker has best home odds
+    val bestDrawBookmaker: String? = null,
+    val bestAwayBookmaker: String? = null,
+    val avgHomeOdds: Double? = null,         // Market consensus (average across books)
+    val avgDrawOdds: Double? = null,
+    val avgAwayOdds: Double? = null,
+    val minHomeOdds: Double? = null,         // Odds spread (min/max range)
+    val maxHomeOdds: Double? = null,
+    val minAwayOdds: Double? = null,
+    val maxAwayOdds: Double? = null,
+    val bookmakerCount: Int = 1              // How many bookmakers provided odds
 ) {
     val matchName: String
         get() = "$homeTeam vs $awayTeam"
 
     /**
-     * Calculate implied probability from decimal odds.
+     * Calculate implied probability from best available decimal odds.
      * Formula: P = 1 / Decimal Odds
      */
     fun getImpliedProbabilities(): ImpliedProbabilities {
@@ -33,6 +45,37 @@ data class MatchData(
             away = (1 / awayOdds) / totalMargin,
             bookmakerMargin = (totalMargin - 1) * 100  // Margin as percentage
         )
+    }
+
+    /**
+     * Calculate market consensus implied probabilities from average odds.
+     * This removes individual bookmaker bias.
+     */
+    fun getConsensusImpliedProbabilities(): ImpliedProbabilities? {
+        val avgHome = avgHomeOdds ?: return null
+        val avgAway = avgAwayOdds ?: return null
+
+        val totalMargin = (1 / avgHome) +
+                          (avgDrawOdds?.let { 1 / it } ?: 0.0) +
+                          (1 / avgAway)
+
+        return ImpliedProbabilities(
+            home = (1 / avgHome) / totalMargin,
+            draw = avgDrawOdds?.let { (1 / it) / totalMargin },
+            away = (1 / avgAway) / totalMargin,
+            bookmakerMargin = (totalMargin - 1) * 100
+        )
+    }
+
+    /**
+     * Calculate odds spread (max - min) as a measure of bookmaker disagreement.
+     * Wider spread = more disagreement = potential value opportunity.
+     */
+    fun getOddsSpread(): Triple<Double, Double, Double>? {
+        val homeSpread = if (minHomeOdds != null && maxHomeOdds != null) maxHomeOdds - minHomeOdds else return null
+        val awaySpread = if (minAwayOdds != null && maxAwayOdds != null) maxAwayOdds - minAwayOdds else return null
+        val drawSpread = 0.0 // Optional, not critical
+        return Triple(homeSpread, drawSpread, awaySpread)
     }
 }
 

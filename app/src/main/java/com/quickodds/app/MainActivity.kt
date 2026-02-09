@@ -1,8 +1,11 @@
 package com.quickodds.app
 
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -24,6 +27,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
+import com.google.android.play.core.install.InstallStateUpdatedListener
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.InstallStatus
+import com.google.android.play.core.install.model.UpdateAvailability
 import com.quickodds.app.ui.screens.bets.BetsScreen
 import com.quickodds.app.ui.screens.market.MarketScreen
 import com.quickodds.app.ui.screens.market.MarketDetailScreen
@@ -40,17 +49,73 @@ import dagger.hilt.android.AndroidEntryPoint
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    private val appUpdateManager by lazy { AppUpdateManagerFactory.create(this) }
+
+    private val updateLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode != RESULT_OK) {
+            Log.d("AppUpdate", "Update flow cancelled or failed: ${result.resultCode}")
+        }
+    }
+
+    private val installStateListener = InstallStateUpdatedListener { state ->
+        if (state.installStatus() == InstallStatus.DOWNLOADED) {
+            appUpdateManager.completeUpdate()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        appUpdateManager.registerListener(installStateListener)
+        checkForUpdate(showFeedback = false)
+
         setContent {
             QuickOddsTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    QuickOddsNavHost()
+                    QuickOddsNavHost(onCheckForUpdate = { checkForUpdate(showFeedback = true) })
                 }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // If an update was downloaded while app was in background, complete it
+        appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
+            if (info.installStatus() == InstallStatus.DOWNLOADED) {
+                appUpdateManager.completeUpdate()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        appUpdateManager.unregisterListener(installStateListener)
+    }
+
+    private fun checkForUpdate(showFeedback: Boolean = false) {
+        appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
+            if (info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
+                && info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)
+            ) {
+                appUpdateManager.startUpdateFlowForResult(
+                    info,
+                    updateLauncher,
+                    AppUpdateOptions.newBuilder(AppUpdateType.FLEXIBLE).build()
+                )
+            } else if (showFeedback) {
+                Toast.makeText(this, "You're on the latest version", Toast.LENGTH_SHORT).show()
+            }
+        }.addOnFailureListener { e ->
+            Log.d("AppUpdate", "Update check failed: ${e.message}")
+            if (showFeedback) {
+                Toast.makeText(this, "Could not check for updates", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -97,7 +162,7 @@ sealed class AppScreen(
  * Main NavHost composable that sets up navigation between screens.
  */
 @Composable
-fun QuickOddsNavHost() {
+fun QuickOddsNavHost(onCheckForUpdate: (() -> Unit)? = null) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -157,7 +222,8 @@ fun QuickOddsNavHost() {
                     viewModel = viewModel,
                     onMatchClick = { matchId ->
                         navController.navigate(AppScreen.MarketDetail.createRoute(matchId))
-                    }
+                    },
+                    onCheckForUpdate = onCheckForUpdate
                 )
             }
 

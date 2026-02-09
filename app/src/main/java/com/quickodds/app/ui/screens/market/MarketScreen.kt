@@ -8,13 +8,18 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.quickodds.app.ui.components.*
@@ -29,6 +34,7 @@ import com.quickodds.app.ui.theme.OrangeWarning
 fun MarketScreen(
     viewModel: MarketViewModel,
     onMatchClick: (String) -> Unit,
+    onCheckForUpdate: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -104,6 +110,35 @@ fun MarketScreen(
                             contentDescription = "Refresh"
                         )
                     }
+
+                    // Overflow menu
+                    var showMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More options"
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Check for update") },
+                                onClick = {
+                                    showMenu = false
+                                    onCheckForUpdate?.invoke()
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.SystemUpdate,
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+                        }
+                    }
                 }
             )
         },
@@ -128,6 +163,18 @@ fun MarketScreen(
                 sports = uiState.availableSports,
                 selectedSport = uiState.selectedSport,
                 onSportSelected = { viewModel.selectSport(it) }
+            )
+
+            // Scan All Header
+            ScanAllHeader(
+                matchCount = uiState.matches.size,
+                isScanning = uiState.isScanningAll,
+                scanProgress = uiState.scanProgress,
+                scanTotal = uiState.scanTotal,
+                lastScanTime = uiState.lastScanCompleted,
+                valueBetsFound = uiState.valueBetsFound,
+                onScanAll = { viewModel.scanAllMatches() },
+                formatTime = { viewModel.formatLastUpdated(it) }
             )
 
             // Content
@@ -173,6 +220,148 @@ private fun SportFilterRow(
                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
                 )
             )
+        }
+    }
+}
+
+@Composable
+private fun ScanAllHeader(
+    matchCount: Int,
+    isScanning: Boolean,
+    scanProgress: Int,
+    scanTotal: Int,
+    lastScanTime: Long?,
+    valueBetsFound: Int,
+    onScanAll: () -> Unit,
+    formatTime: (Long?) -> String
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "AI Slate Analysis",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "$matchCount matches available",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Button(
+                    onClick = onScanAll,
+                    enabled = !isScanning && matchCount > 0,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    if (isScanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scanning...")
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Psychology,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scan All")
+                    }
+                }
+            }
+
+            // Progress bar when scanning
+            AnimatedVisibility(visible = isScanning) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { if (scanTotal > 0) scanProgress.toFloat() / scanTotal else 0f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Analyzing $scanProgress of $scanTotal matches...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Last scan results
+            AnimatedVisibility(visible = lastScanTime != null && !isScanning) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.AccessTime,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Last scan: ${formatTime(lastScanTime)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (valueBetsFound > 0) {
+                            Surface(
+                                color = GreenValue,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = Color.White
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "$valueBetsFound Value Bets",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -288,7 +477,7 @@ private fun MatchesList(
             }
 
             item {
-                Divider(modifier = Modifier.padding(vertical = 16.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             }
         }
 
