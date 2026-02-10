@@ -23,6 +23,8 @@ turbine = "1.2.0"
 coroutinesTest = "1.9.0"
 splashscreen = "1.0.1"
 playAppUpdate = "2.1.0"
+dataStore = "1.1.1"
+playBilling = "7.1.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -64,6 +66,10 @@ androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscree
 # In-App Updates
 play-app-update = { group = "com.google.android.play", name = "app-update", version.ref = "playAppUpdate" }
 play-app-update-ktx = { group = "com.google.android.play", name = "app-update-ktx", version.ref = "playAppUpdate" }
+# DataStore
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "dataStore" }
+# Play Billing
+play-billing = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
 # Testing
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }

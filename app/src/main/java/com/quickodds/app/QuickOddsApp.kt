@@ -3,6 +3,7 @@ package com.quickodds.app
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.quickodds.app.billing.BillingRepository
 import com.quickodds.app.di.DatabaseInitializer
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,9 @@ class QuickOddsApp : Application(), Configuration.Provider {
     lateinit var databaseInitializer: DatabaseInitializer
 
     @Inject
+    lateinit var billingRepository: BillingRepository
+
+    @Inject
     lateinit var workerFactory: HiltWorkerFactory
 
     override fun onCreate() {
@@ -38,6 +42,9 @@ class QuickOddsApp : Application(), Configuration.Provider {
         applicationScope.launch(Dispatchers.IO) {
             databaseInitializer.initializeWallet()
         }
+
+        // Initialize billing connection
+        billingRepository.startConnection()
     }
 
     /**

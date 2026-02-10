@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickodds.app.ai.AIAnalysisService
+import com.quickodds.app.billing.BillingRepository
 import com.quickodds.app.ai.model.*
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -18,12 +19,15 @@ import com.quickodds.app.data.remote.api.OddsCloudFunctionService
 import com.quickodds.app.data.remote.dto.OddsEvent
 import com.quickodds.app.data.remote.MockOddsDataSource
 import com.quickodds.app.data.repository.TeamFormRepository
+import com.quickodds.app.data.repository.UsageLimitRepository
 import com.quickodds.app.ui.components.MatchCardState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 
 /**
@@ -43,7 +47,10 @@ data class MarketUiState(
     val scanProgress: Int = 0,
     val scanTotal: Int = 0,
     val lastScanCompleted: Long? = null,
-    val valueBetsFound: Int = 0
+    val valueBetsFound: Int = 0,
+    val showPaywall: Boolean = false,
+    val remainingScans: Int = 1,
+    val remainingAnalyzes: Int = 3
 ) {
     companion object {
         val defaultSports = listOf(
@@ -81,7 +88,9 @@ class MarketViewModel @Inject constructor(
     private val analysisService: AIAnalysisService,
     private val cachedOddsEventDao: CachedOddsEventDao,
     private val cachedAnalysisDao: CachedAnalysisDao,
-    private val teamFormRepository: TeamFormRepository
+    private val teamFormRepository: TeamFormRepository,
+    private val usageLimitRepository: UsageLimitRepository,
+    val billingRepository: BillingRepository
 ) : ViewModel() {
 
     companion object {
@@ -94,6 +103,7 @@ class MarketViewModel @Inject constructor(
     init {
         initializeAndObserveWallet()
         loadMatches()
+        refreshUsageCounts()
     }
 
     private fun initializeAndObserveWallet() {
@@ -125,33 +135,35 @@ class MarketViewModel @Inject constructor(
 
                 if (immediateData != null) {
                     val sorted = immediateData.sortedBy { it.commenceTime }
-                    val matchStates = preserveMatchStates(sorted)
+                    val todayOnly = sorted.filter { isTodayMatch(it.commenceTime) }
+                    val matchStates = preserveMatchStates(todayOnly)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            matches = sorted,
+                            matches = todayOnly,
                             matchStates = matchStates,
                             isUsingLiveData = true,
                             error = null
                         )
                     }
-                    Log.d(TAG, "Showing ${sorted.size} cached events for $sportKey instantly")
+                    Log.d(TAG, "Showing ${todayOnly.size} today's events (of ${sorted.size} cached) for $sportKey")
                 } else {
                     // No cache — show mock data instantly
                     val mock = withContext(Dispatchers.IO) {
                         MockOddsDataSource.getMatches(sportKey).sortedBy { it.commenceTime }
                     }
-                    val matchStates = preserveMatchStates(mock)
+                    val todayMock = mock.filter { isTodayMatch(it.commenceTime) }
+                    val matchStates = preserveMatchStates(todayMock)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            matches = mock,
+                            matches = todayMock,
                             matchStates = matchStates,
                             isUsingLiveData = false,
-                            error = "Using demo data"
+                            error = if (todayMock.isEmpty()) null else "Using demo data"
                         )
                     }
-                    Log.d(TAG, "Showing mock data for $sportKey instantly")
+                    Log.d(TAG, "Showing ${todayMock.size} today's mock events for $sportKey")
                 }
 
                 // Step 2: Check if API refresh is needed, do it in background
@@ -201,11 +213,12 @@ class MarketViewModel @Inject constructor(
                     }
                     Log.d(TAG, "Fetched and cached ${freshMatches.size} events from API for $sportKey")
 
-                    // Update UI with fresh data, preserving any existing analysis states
-                    val matchStates = preserveMatchStates(freshMatches)
+                    // Update UI with fresh data filtered to today, preserving analysis states
+                    val todayFresh = freshMatches.filter { isTodayMatch(it.commenceTime) }
+                    val matchStates = preserveMatchStates(todayFresh)
                     _uiState.update {
                         it.copy(
-                            matches = freshMatches,
+                            matches = todayFresh,
                             matchStates = matchStates,
                             isUsingLiveData = true,
                             error = null
@@ -243,10 +256,17 @@ class MarketViewModel @Inject constructor(
 
     /**
      * Trigger AI analysis for a specific match (fire-and-forget from UI).
+     * Checks usage limits first — shows paywall if exceeded.
      */
     fun analyzeMatch(matchId: String) {
         viewModelScope.launch {
+            if (!usageLimitRepository.canAnalyze()) {
+                _uiState.update { it.copy(showPaywall = true) }
+                return@launch
+            }
+            usageLimitRepository.recordAnalyze()
             performAnalysis(matchId)
+            refreshUsageCounts()
         }
     }
 
@@ -391,25 +411,39 @@ class MarketViewModel @Inject constructor(
 
     /**
      * Analyze all matches that are scheduled for today.
-     * Skips matches that are already analyzed or currently being analyzed.
+     * Runs up to 3 concurrently so results appear one by one in the UI.
      */
     fun analyzeAllToday() {
-        val state = _uiState.value
-        val todayMatches = state.matches.filter { match ->
-            isTodayMatch(match.commenceTime) &&
-                state.matchStates[match.id]?.isAnalyzed != true &&
-                state.matchStates[match.id]?.isAnalyzing != true
-        }
-
-        if (todayMatches.isEmpty()) return
-
-        _uiState.update { it.copy(isAnalyzingAll = true) }
-
         viewModelScope.launch {
-            // Analyze sequentially to avoid API rate limits
-            for (match in todayMatches) {
-                performAnalysis(match.id)
+            if (!usageLimitRepository.canScanAll()) {
+                _uiState.update { it.copy(showPaywall = true) }
+                return@launch
             }
+            usageLimitRepository.recordScanAll()
+            refreshUsageCounts()
+
+            val state = _uiState.value
+            val todayMatches = state.matches.filter { match ->
+                isTodayMatch(match.commenceTime) &&
+                    state.matchStates[match.id]?.isAnalyzed != true &&
+                    state.matchStates[match.id]?.isAnalyzing != true
+            }
+            if (todayMatches.isEmpty()) return@launch
+
+            _uiState.update { it.copy(isAnalyzingAll = true) }
+
+            val semaphore = Semaphore(3)
+            val jobs = todayMatches.map { match ->
+                launch {
+                    semaphore.acquire()
+                    try {
+                        performAnalysis(match.id)
+                    } finally {
+                        semaphore.release()
+                    }
+                }
+            }
+            jobs.forEach { it.join() }
             _uiState.update { it.copy(isAnalyzingAll = false) }
         }
     }
@@ -426,110 +460,68 @@ class MarketViewModel @Inject constructor(
     }
 
     /**
-     * Scan all currently loaded matches using bulk slate analysis (single API call).
+     * Scan all matches progressively — analyzes up to 3 at a time and updates the UI
+     * as each result comes back, so the user sees results appearing one by one.
      */
     fun scanAllMatches() {
-        val matches = _uiState.value.matches
-        if (matches.isEmpty()) return
+        viewModelScope.launch {
+            if (!usageLimitRepository.canScanAll()) {
+                _uiState.update { it.copy(showPaywall = true) }
+                return@launch
+            }
+            usageLimitRepository.recordScanAll()
+            refreshUsageCounts()
+            doScanAll()
+        }
+    }
 
-        _uiState.update { it.copy(isScanningAll = true, scanProgress = 0, scanTotal = matches.size) }
+    private fun doScanAll() {
+        val state = _uiState.value
+        val toAnalyze = state.matches.filter { match ->
+            state.matchStates[match.id]?.isAnalyzed != true &&
+                state.matchStates[match.id]?.isAnalyzing != true
+        }
+        if (toAnalyze.isEmpty()) return
+
+        _uiState.update {
+            it.copy(isScanningAll = true, scanProgress = 0, scanTotal = toAnalyze.size, valueBetsFound = 0)
+        }
 
         viewModelScope.launch {
-            try {
-                // Build SlateMatchInput list with real form data
-                val slateInputs = matches.map { match ->
-                    val matchData = createMatchData(match)
-                    val (homeForm, awayForm) = teamFormRepository.getMatchFormData(
-                        sportKey = match.sportKey,
-                        homeTeam = match.homeTeam,
-                        awayTeam = match.awayTeam
-                    )
-                    val stats = RecentStats(
-                        homeTeamForm = homeForm?.formString,
-                        awayTeamForm = awayForm?.formString,
-                        homeGoalsScored = homeForm?.goalsScored,
-                        homeGoalsConceded = homeForm?.goalsConceded,
-                        awayGoalsScored = awayForm?.goalsScored,
-                        awayGoalsConceded = awayForm?.goalsConceded
-                    )
-                    SlateMatchInput(matchData, stats)
-                }
+            val semaphore = Semaphore(3) // max 3 concurrent API calls
+            val completed = AtomicInteger(0)
+            val valueBets = AtomicInteger(0)
 
-                _uiState.update { it.copy(scanProgress = 1) }
-
-                when (val result = analysisService.analyzeUpcomingSlate(slateInputs)) {
-                    is BulkAnalysisResult.Success -> {
-                        var valueBets = 0
-                        for (betResult in result.results) {
-                            val eventId = betResult.matchData.eventId
-                            val analysis = betResult.aiAnalysis
-                            if (analysis.isValueBet) valueBets++
-
-                            // Cache each result
-                            cachedAnalysisDao.insertAnalysis(
-                                CachedAnalysisEntity.fromAnalysis(eventId, analysis)
-                            )
-
-                            // Update match card state
-                            updateMatchState(eventId) {
-                                it.copy(isAnalyzed = true, analysisResult = analysis)
-                            }
+            val jobs = toAnalyze.map { match ->
+                launch {
+                    semaphore.acquire()
+                    try {
+                        performAnalysis(match.id)
+                        // Check if this match was identified as a value bet
+                        val analysis = _uiState.value.matchStates[match.id]?.analysisResult
+                        if (analysis?.isValueBet == true) {
+                            valueBets.incrementAndGet()
                         }
+                    } finally {
+                        semaphore.release()
+                        val progress = completed.incrementAndGet()
                         _uiState.update {
-                            it.copy(
-                                isScanningAll = false,
-                                scanProgress = matches.size,
-                                lastScanCompleted = System.currentTimeMillis(),
-                                valueBetsFound = valueBets
-                            )
+                            it.copy(scanProgress = progress, valueBetsFound = valueBets.get())
                         }
-                        Log.d(TAG, "Bulk scan complete: ${result.results.size} analyzed, $valueBets value bets found")
                     }
-                    is BulkAnalysisResult.PartialSuccess -> {
-                        var valueBets = 0
-                        for (betResult in result.results) {
-                            val eventId = betResult.matchData.eventId
-                            val analysis = betResult.aiAnalysis
-                            if (analysis.isValueBet) valueBets++
-
-                            cachedAnalysisDao.insertAnalysis(
-                                CachedAnalysisEntity.fromAnalysis(eventId, analysis)
-                            )
-                            updateMatchState(eventId) {
-                                it.copy(isAnalyzed = true, analysisResult = analysis)
-                            }
-                        }
-                        _uiState.update {
-                            it.copy(
-                                isScanningAll = false,
-                                scanProgress = matches.size,
-                                lastScanCompleted = System.currentTimeMillis(),
-                                valueBetsFound = valueBets,
-                                error = "${result.failures.size} matches failed to analyze"
-                            )
-                        }
-                        Log.d(TAG, "Bulk scan partial: ${result.results.size} ok, ${result.failures.size} failed")
-                    }
-                    is BulkAnalysisResult.Error -> {
-                        _uiState.update {
-                            it.copy(
-                                isScanningAll = false,
-                                error = "Scan failed: ${result.message}"
-                            )
-                        }
-                        Log.e(TAG, "Bulk scan error: ${result.message}")
-                    }
-                    is BulkAnalysisResult.Loading -> { /* no-op */ }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "scanAllMatches error", e)
-                _uiState.update {
-                    it.copy(
-                        isScanningAll = false,
-                        error = "Scan failed: ${e.message}"
-                    )
                 }
             }
+
+            // Wait for all to finish
+            jobs.forEach { it.join() }
+
+            _uiState.update {
+                it.copy(
+                    isScanningAll = false,
+                    lastScanCompleted = System.currentTimeMillis()
+                )
+            }
+            Log.d(TAG, "Progressive scan complete: ${toAnalyze.size} analyzed, ${valueBets.get()} value bets found")
         }
     }
 
@@ -541,5 +533,20 @@ class MarketViewModel @Inject constructor(
 
     fun clearError() {
         _uiState.update { it.copy(error = null) }
+    }
+
+    fun dismissPaywall() {
+        _uiState.update { it.copy(showPaywall = false) }
+    }
+
+    private fun refreshUsageCounts() {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    remainingScans = usageLimitRepository.getRemainingScans(),
+                    remainingAnalyzes = usageLimitRepository.getRemainingAnalyzes()
+                )
+            }
+        }
     }
 }

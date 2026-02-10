@@ -21,6 +21,9 @@ interface CachedAnalysisDao {
     @Query("DELETE FROM cached_analysis WHERE cachedAt < :cutoffTime")
     suspend fun deleteStaleAnalyses(cutoffTime: Long)
 
+    @Query("SELECT * FROM cached_analysis WHERE eventId IN (:eventIds)")
+    suspend fun getAnalysesByIds(eventIds: List<String>): List<CachedAnalysisEntity>
+
     @Query("DELETE FROM cached_analysis")
     suspend fun clearAll()
 }

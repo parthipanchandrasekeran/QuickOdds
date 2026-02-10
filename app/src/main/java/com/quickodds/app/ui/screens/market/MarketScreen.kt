@@ -10,11 +10,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Circle
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.quickodds.app.ui.components.*
+import com.quickodds.app.ui.screens.paywall.PaywallDialog
 import com.quickodds.app.ui.theme.GreenValue
 import com.quickodds.app.ui.theme.OrangeWarning
 
@@ -35,10 +35,19 @@ fun MarketScreen(
     viewModel: MarketViewModel,
     onMatchClick: (String) -> Unit,
     onCheckForUpdate: (() -> Unit)? = null,
+    onNavigateToSettings: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Paywall dialog
+    if (uiState.showPaywall) {
+        PaywallDialog(
+            billingRepository = viewModel.billingRepository,
+            onDismiss = { viewModel.dismissPaywall() }
+        )
+    }
 
     // Show error in snackbar
     LaunchedEffect(uiState.error) {
@@ -86,58 +95,26 @@ fun MarketScreen(
                         )
                     }
 
-                    // Analyze All Today button
-                    IconButton(
-                        onClick = { viewModel.analyzeAllToday() },
-                        enabled = !uiState.isAnalyzingAll && !uiState.isLoading
+                    // Refresh Odds — prominent labeled button
+                    TextButton(
+                        onClick = { viewModel.loadMatches() },
+                        enabled = !uiState.isLoading
                     ) {
-                        if (uiState.isAnalyzingAll) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Psychology,
-                                contentDescription = "Analyze all today's matches"
-                            )
-                        }
-                    }
-
-                    IconButton(onClick = { viewModel.loadMatches() }) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
-                            contentDescription = "Refresh"
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
                         )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Refresh Odds", style = MaterialTheme.typography.labelMedium)
                     }
 
-                    // Overflow menu
-                    var showMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { showMenu = true }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "More options"
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showMenu,
-                            onDismissRequest = { showMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Check for update") },
-                                onClick = {
-                                    showMenu = false
-                                    onCheckForUpdate?.invoke()
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.SystemUpdate,
-                                        contentDescription = null
-                                    )
-                                }
-                            )
-                        }
+                    // Settings gear
+                    IconButton(onClick = { onNavigateToSettings?.invoke() }) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings"
+                        )
                     }
                 }
             )
@@ -176,6 +153,27 @@ fun MarketScreen(
                 onScanAll = { viewModel.scanAllMatches() },
                 formatTime = { viewModel.formatLastUpdated(it) }
             )
+
+            // Usage limits info (free tier only)
+            if (uiState.remainingScans < Int.MAX_VALUE) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Text(
+                        text = "Scans: ${uiState.remainingScans} left",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Analyzes: ${uiState.remainingAnalyzes} left",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             // Content
             when {
@@ -387,14 +385,21 @@ private fun EmptyContent() {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            Icon(
+                imageVector = Icons.Default.AccessTime,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "No matches available",
+                text = "No matches today",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Check back later for upcoming events",
+                text = "There are no scheduled matches for today in this league",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )

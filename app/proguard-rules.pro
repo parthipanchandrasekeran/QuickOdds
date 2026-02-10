@@ -42,3 +42,7 @@
 -dontwarn retrofit2.**
 -dontwarn okhttp3.**
 -dontwarn okio.**
+
+# ============ Google Play Billing ============
+-keep class com.android.vending.billing.** { *; }
+-keep class com.android.billingclient.** { *; }

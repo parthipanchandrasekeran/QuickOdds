@@ -12,11 +12,14 @@ import com.quickodds.app.data.local.dao.CachedMarketDao
 import com.quickodds.app.data.local.dao.CachedOddsEventDao
 import com.quickodds.app.data.local.dao.FavoriteMarketDao
 import com.quickodds.app.data.local.dao.PredictionRecordDao
+import com.quickodds.app.data.local.dao.UsageRecordDao
 import com.quickodds.app.data.local.dao.UserWalletDao
 import com.quickodds.app.data.local.dao.VirtualBetDao
 import com.quickodds.app.data.local.entity.UserWallet
 import com.quickodds.app.data.remote.api.OddsCloudFunctionService
 import com.quickodds.app.data.remote.api.SportsApiService
+import com.quickodds.app.data.preferences.ThemePreferences
+import com.quickodds.app.data.preferences.dataStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -57,6 +60,14 @@ annotation class CloudFunctionRetrofit
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+
+    // ============ DATASTORE / PREFERENCES ============
+
+    @Provides
+    @Singleton
+    fun provideThemePreferences(@ApplicationContext context: Context): ThemePreferences {
+        return ThemePreferences(context.dataStore)
+    }
 
     // ============ API KEYS ============
 
@@ -219,7 +230,7 @@ object AppModule {
             AppDatabase::class.java,
             AppDatabase.DATABASE_NAME
         )
-            .addMigrations(AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6)
+            .addMigrations(AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7)
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
     }
@@ -251,6 +262,10 @@ object AppModule {
     @Provides
     @Singleton
     fun providePredictionRecordDao(database: AppDatabase): PredictionRecordDao = database.predictionRecordDao()
+
+    @Provides
+    @Singleton
+    fun provideUsageRecordDao(database: AppDatabase): UsageRecordDao = database.usageRecordDao()
 }
 
 /**
@@ -285,8 +300,8 @@ class DatabaseInitializer(
                     currency = AppConfig.DEFAULT_CURRENCY
                 )
             )
-        } else if (existingWallet.balance == 10000.0) {
-            // One-time fix: reset balance from old default to new default
+        } else if (existingWallet.balance > AppConfig.INITIAL_WALLET_BALANCE) {
+            // Reset inflated balances from old defaults (10k/7k) to 200
             userWalletDao.setBalance(AppConfig.INITIAL_WALLET_BALANCE)
         }
     }

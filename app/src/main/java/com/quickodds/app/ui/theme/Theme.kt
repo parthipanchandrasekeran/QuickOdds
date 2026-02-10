@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import com.quickodds.app.data.preferences.ThemeMode
 
 // Colors
 val Purple80 = Color(0xFFD0BCFF)
@@ -46,10 +47,15 @@ private val LightColorScheme = lightColorScheme(
 
 @Composable
 fun QuickOddsTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false,
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
     content: @Composable () -> Unit
 ) {
+    val darkTheme = when (themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+
     val colorScheme = when {
         darkTheme -> DarkColorScheme
         else -> LightColorScheme

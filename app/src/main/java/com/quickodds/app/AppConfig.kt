@@ -35,4 +35,20 @@ object AppConfig {
 
     /** Stale cache serving window when offline (hours). */
     const val OFFLINE_CACHE_HOURS = 24
+
+    // ============ Usage Limits (Free Tier) ============
+
+    /** Max "Scan All" uses per day for free users. */
+    const val FREE_SCAN_ALL_LIMIT_PER_DAY = 1
+
+    /** Max individual "Analyze" uses per day for free users. */
+    const val FREE_ANALYZE_LIMIT_PER_DAY = 3
+
+    // ============ Subscriptions ============
+
+    /** Google Play product ID for monthly subscription. */
+    const val SUBSCRIPTION_MONTHLY_ID = "quickodds_pro_monthly"
+
+    /** Google Play product ID for yearly subscription. */
+    const val SUBSCRIPTION_YEARLY_ID = "quickodds_pro_yearly"
 }

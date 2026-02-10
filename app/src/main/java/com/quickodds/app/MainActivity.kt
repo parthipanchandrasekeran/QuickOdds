@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.outlined.Receipt
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.TrendingUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,13 +36,17 @@ import com.google.android.play.core.install.model.AppUpdateType
 import com.google.android.play.core.install.model.InstallStatus
 import com.google.android.play.core.install.model.UpdateAvailability
 import com.quickodds.app.ui.screens.bets.BetsScreen
+import com.quickodds.app.data.preferences.ThemeMode
+import com.quickodds.app.data.preferences.ThemePreferences
 import com.quickodds.app.ui.screens.market.MarketScreen
 import com.quickodds.app.ui.screens.market.MarketDetailScreen
 import com.quickodds.app.ui.screens.market.MarketDetailViewModel
 import com.quickodds.app.ui.screens.market.MarketViewModel
+import com.quickodds.app.ui.screens.settings.SettingsScreen
 import com.quickodds.app.ui.theme.QuickOddsTheme
 import com.quickodds.app.ui.viewmodel.BetViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 /**
  * Main Activity for Quick Odds app.
@@ -49,6 +55,8 @@ import dagger.hilt.android.AndroidEntryPoint
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var themePreferences: ThemePreferences
 
     private val appUpdateManager by lazy { AppUpdateManagerFactory.create(this) }
 
@@ -73,12 +81,21 @@ class MainActivity : ComponentActivity() {
         checkForUpdate(showFeedback = false)
 
         setContent {
-            QuickOddsTheme {
+            val themeMode by themePreferences.themeMode.collectAsState(initial = ThemeMode.SYSTEM)
+            var hasAcceptedDisclaimer by remember { mutableStateOf(false) }
+
+            QuickOddsTheme(themeMode = themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    QuickOddsNavHost(onCheckForUpdate = { checkForUpdate(showFeedback = true) })
+                    if (!hasAcceptedDisclaimer) {
+                        com.quickodds.app.ui.components.ConsentDialog(
+                            onAccept = { hasAcceptedDisclaimer = true }
+                        )
+                    } else {
+                        QuickOddsNavHost(onCheckForUpdate = { checkForUpdate(showFeedback = true) })
+                    }
                 }
             }
         }
@@ -153,6 +170,13 @@ sealed class AppScreen(
         fun createRoute(matchId: String) = "market/$matchId"
     }
 
+    data object Settings : AppScreen(
+        route = "settings",
+        title = "Settings",
+        selectedIcon = Icons.Filled.Settings,
+        unselectedIcon = Icons.Outlined.Settings
+    )
+
     companion object {
         val bottomNavItems = listOf(Markets, Bets)
     }
@@ -223,7 +247,10 @@ fun QuickOddsNavHost(onCheckForUpdate: (() -> Unit)? = null) {
                     onMatchClick = { matchId ->
                         navController.navigate(AppScreen.MarketDetail.createRoute(matchId))
                     },
-                    onCheckForUpdate = onCheckForUpdate
+                    onCheckForUpdate = onCheckForUpdate,
+                    onNavigateToSettings = {
+                        navController.navigate(AppScreen.Settings.route)
+                    }
                 )
             }
 
@@ -337,6 +364,14 @@ fun QuickOddsNavHost(onCheckForUpdate: (() -> Unit)? = null) {
                 val viewModel: BetViewModel = hiltViewModel()
 
                 BetsScreen(viewModel = viewModel)
+            }
+
+            // Settings Screen
+            composable(AppScreen.Settings.route) {
+                SettingsScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onCheckForUpdate = onCheckForUpdate
+                )
             }
         }
     }

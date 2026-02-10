@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
+import com.quickodds.app.ui.screens.paywall.PaywallDialog
 import com.quickodds.app.ui.theme.GreenValue
 import com.quickodds.app.ui.theme.OrangeWarning
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -30,6 +31,14 @@ fun MarketsScreen(
     viewModel: MarketsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // Paywall dialog
+    if (uiState.showPaywall) {
+        PaywallDialog(
+            billingRepository = viewModel.billingRepository,
+            onDismiss = { viewModel.dismissPaywall() }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -49,21 +58,26 @@ fun MarketsScreen(
                     }
                 },
                 actions = {
-                    // Refresh button
-                    IconButton(
+                    // Refresh odds button with label
+                    TextButton(
                         onClick = { viewModel.refreshMarkets() },
                         enabled = !uiState.isRefreshing
                     ) {
                         if (uiState.isRefreshing) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
+                                modifier = Modifier.size(16.dp),
                                 strokeWidth = 2.dp
                             )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Updating...", style = MaterialTheme.typography.labelSmall)
                         } else {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Refresh"
+                                contentDescription = "Refresh odds",
+                                modifier = Modifier.size(18.dp)
                             )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Refresh", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -101,6 +115,27 @@ fun MarketsScreen(
                 formatTime = { viewModel.formatLastUpdated(it) }
             )
 
+            // Usage limits info (free tier only)
+            if (uiState.remainingScans < Int.MAX_VALUE) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Text(
+                        text = "Scans: ${uiState.remainingScans} left",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Analyzes: ${uiState.remainingAnalyzes} left",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             if (uiState.isLoading) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -113,10 +148,23 @@ fun MarketsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.AccessTime,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "No markets available",
-                        style = MaterialTheme.typography.bodyLarge,
+                        text = "No matches today",
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "There are no scheduled matches for today in this league",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
                 }
             } else {
